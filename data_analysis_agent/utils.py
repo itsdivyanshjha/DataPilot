@@ -1,5 +1,6 @@
 import re
 import os
+import streamlit as st
 
 # Create charts directory if it doesn't exist
 CHARTS_DIR = "charts"
@@ -7,31 +8,36 @@ if not os.path.exists(CHARTS_DIR):
     os.makedirs(CHARTS_DIR)
 
 def check_image_file_exists(text):
-    # Function to extract the image location
-    def extract_image_location(text):
-        pattern = r'<image : (r".*?")>'
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip('r"')
-        return None
+    # Function to extract all image locations
+    def extract_image_locations(text):
+        pattern = r'<image : r"(charts/[^"]+)">'
+        matches = re.findall(pattern, text)
+        return matches if matches else None
 
-    # Extract the image location
-    image_location = extract_image_location(text)
+    # Extract the image locations
+    image_locations = extract_image_locations(text)
 
-    if image_location:
-        # Ensure the path is relative to the charts directory
-        if not image_location.startswith(CHARTS_DIR):
-            image_location = os.path.join(CHARTS_DIR, os.path.basename(image_location))
-            
-        if os.path.isfile(image_location):
-            return fr"{image_location}"  # Return the image location if detected in agent response and actually exists
-        else:
-            # return "0"  # Image location detected in agent response but doesn't exist
-            return 0  # Image location detected in agent response but doesn't exist
-            # return fr"{image_location}"
-    else:
-        return -1  # Image location not detected in agent response
+    if image_locations:
+        valid_images = []
+        for loc in image_locations:
+            if os.path.isfile(loc):
+                valid_images.append(loc)
+        
+        return valid_images if valid_images else 0
+    return -1
 
+def display_images(image_paths):
+    """Display multiple images with their download buttons"""
+    if isinstance(image_paths, list):
+        for img_path in image_paths:
+            st.image(img_path)
+            image_data = read_image_file(img_path)
+            st.download_button(
+                label=f"Download {os.path.basename(img_path)}",
+                data=image_data,
+                file_name=os.path.basename(img_path),
+                mime="image/png"
+            )
 
 # Example usage:
 # text = """The correlation matrix plot has been saved. <image : r"charts/correlation_matrix.png">"""

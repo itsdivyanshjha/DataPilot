@@ -3,6 +3,7 @@ import pandas as pd
 from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_groq import ChatGroq
 import os
+import re
 
 # Set Groq API key first, before any other imports
 GROQ_API_KEY = "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"
@@ -58,23 +59,21 @@ with main_col:
     # Display chat messages from history on app rerun
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]):
+            # Display the message content
             st.markdown(message["content"])
-
-        # Displaying previous images
-        im = check_image_file_exists(message["content"])
-        if im not in {0, -1}:
-            with st.chat_message('assistant'):
-                st.image(im)
-
-                # Generate a unique key for each download button
-                download_button_key = f"download_button_{message['content']}"
-
-                # Download button for the image
-                image_data = read_image_file(im)
-                st.download_button(label="Download image",
-                                   data=image_data,
-                                   file_name=os.path.basename(im),
-                                   mime="image/png")
+            
+            # Check for images in the message
+            images = check_image_file_exists(message["content"])
+            if isinstance(images, list):
+                for img_path in images:
+                    st.image(img_path)
+                    image_data = read_image_file(img_path)
+                    st.download_button(
+                        label=f"Download {os.path.basename(img_path)}",
+                        data=image_data,
+                        file_name=os.path.basename(img_path),
+                        mime="image/png"
+                    )
 
     # If the user uploads a CSV file
     if file is not None:
@@ -112,17 +111,22 @@ with main_col:
 
             # Invoke the agent executor with the user's query
             res = agent_executor.invoke(user_input)
-
-            # Format the response for better readability
-            formatted_response = f"### Insights about the Dataset\n\n{res['output']}"
+            
+            # Process the response and check for multiple images
+            response_text = res['output']
+            image_tokens = re.findall(r'<image : r"(charts/[^"]+)">', response_text)
+            
+            # Format the response text
+            formatted_response = res['output']
+            
+            # Add images to the session state if they exist
+            if image_tokens:
+                for img_path in image_tokens:
+                    if os.path.isfile(img_path):
+                        st.session_state.img_list.append(img_path)
+            
             st.session_state.chat_history.append({"role": "assistant", "content": formatted_response})
-
-            # Check for images generated
-            img_file = check_image_file_exists(res['output'])
-            if img_file not in {0, -1}:
-                st.session_state.chat_history.append({"role": "assistant", "content": img_file})
-                st.session_state.img_list.append(img_file)
-
+            
             # Display chat messages after new input
             st.rerun()
 

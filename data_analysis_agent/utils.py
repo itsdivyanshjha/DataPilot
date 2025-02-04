@@ -1,6 +1,7 @@
 import re
 import os
 import streamlit as st
+import numpy as np
 
 # Create charts directory if it doesn't exist
 CHARTS_DIR = "charts"
@@ -58,3 +59,61 @@ def read_image_file(image_path):
     except Exception as e:
         print(f"Error reading image file: {e}")
         return None
+
+def generate_dataset_overview(df):
+    """Generate comprehensive overview of the dataset"""
+    overview = {
+        'basic_info': {
+            'rows': len(df),
+            'columns': len(df.columns),
+            'memory_usage': f"{df.memory_usage(deep=True).sum() / 1024**2:.2f} MB"
+        },
+        'column_info': {},
+        'missing_values': df.isnull().sum().to_dict(),
+        'numeric_columns': df.select_dtypes(include=['int64', 'float64']).columns.tolist(),
+        'categorical_columns': df.select_dtypes(include=['object', 'category']).columns.tolist()
+    }
+    
+    # Generate column-specific information
+    for column in df.columns:
+        col_info = {
+            'dtype': str(df[column].dtype),
+            'unique_values': len(df[column].unique()),
+            'missing_values': df[column].isnull().sum(),
+            'missing_percentage': f"{(df[column].isnull().sum() / len(df)) * 100:.2f}%"
+        }
+        
+        # Add specific stats for numeric columns
+        if df[column].dtype in ['int64', 'float64']:
+            col_info.update({
+                'mean': f"{df[column].mean():.2f}",
+                'median': f"{df[column].median():.2f}",
+                'std': f"{df[column].std():.2f}",
+                'min': df[column].min(),
+                'max': df[column].max()
+            })
+        # Add specific stats for categorical columns
+        elif df[column].dtype == 'object':
+            value_counts = df[column].value_counts()
+            col_info.update({
+                'most_common': value_counts.index[0] if not value_counts.empty else None,
+                'most_common_count': value_counts.iloc[0] if not value_counts.empty else 0
+            })
+            
+        overview['column_info'][column] = col_info
+    
+    return overview
+
+def calculate_data_quality_score(df):
+    """Calculate a data quality score based on various metrics"""
+    quality_metrics = {
+        'completeness': (1 - df.isnull().sum().sum() / (df.shape[0] * df.shape[1])) * 100,
+        'uniqueness': np.mean([len(df[col].unique()) / len(df) for col in df.columns]) * 100,
+        'consistency': sum([1 for col in df.columns if df[col].dtype in ['int64', 'float64', 'object']]) / len(df.columns) * 100
+    }
+    
+    # Calculate overall score (weighted average)
+    weights = {'completeness': 0.4, 'uniqueness': 0.3, 'consistency': 0.3}
+    overall_score = sum(score * weights[metric] for metric, score in quality_metrics.items())
+    
+    return quality_metrics, overall_score

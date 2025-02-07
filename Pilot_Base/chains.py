@@ -1,6 +1,6 @@
 from langchain.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import ChatOpenAI  # Change to OpenAI
+from langchain_openai import ChatOpenAI
 import os
 
 # Initialize OpenRouter LLM for chains

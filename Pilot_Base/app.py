@@ -70,7 +70,7 @@ with main_col:
     st.title("Data Analysis Dashboard")
 
     with st.sidebar:
-        st.title("DataPilot : Your Data Analysis Agent🧞")
+        st.title("DataPilot : Your Dataset Analysis Agent🧞")
         
         # File upload section with multiple file support
         st.write("Upload your data file")
@@ -355,11 +355,6 @@ with main_col:
             max_execution_time=30,
             allow_dangerous_code=True
         )
-
-        # import uvicorn
-        # import subprocess
-        # add_routes(fastapiapp, agent_executor, path="/pandas_agent")
-        # subprocess.Popen(["uvicorn", "app:fastapiapp", "--host", "localhost", "--port", "8003"])
 
         # Chat Interface
         st.header("💬 Ask Questions About Your Data")

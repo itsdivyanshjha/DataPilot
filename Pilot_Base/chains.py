@@ -3,15 +3,15 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI
 import os
 
-# Initialize OpenRouter LLM for chains
+# Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="anthropic/claude-3-haiku",  # Using Claude 3 Haiku as it's more stable for this use case
+    model="anthropic/claude-3-haiku",  # Using Claude 3 Haiku through OpenRouter
     temperature=0.0,
-    openai_api_base="https://openrouter.ai/api/v1",
-    openai_api_key=os.environ.get("OPENAI_API_KEY"),
+    openai_api_key="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",
+    base_url="https://openrouter.ai/api/v1",
     default_headers={
-        "HTTP-Referer": "localhost:8501",  # Replace with your site URL
-        "X-Title": "DataPilot",  # Your application name
+        "HTTP-Referer": "https://openrouter.ai",  # Required by OpenRouter
+        "X-Title": "DataPilot"
     }
 )
 

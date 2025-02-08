@@ -14,31 +14,17 @@ from utils import (
     preprocess_dataframe,
     calculate_data_quality_score
 )
-
-# Set OpenRouter API key and configuration
-OPENROUTER_API_KEY = "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"
-os.environ["OPENAI_API_KEY"] = OPENROUTER_API_KEY  # LangChain uses this env variable
-
 from chains import summarization_chain
 
-def handle_groq_error(error):
-    """Handle Groq API errors gracefully"""
-    if "413" in str(error):
-        st.error("The query is too complex. Please try a simpler question or break it down into smaller parts.")
-    elif "rate_limit_exceeded" in str(error):
-        st.error("Rate limit exceeded. Please wait a moment before trying again.")
-    else:
-        st.error(f"An error occurred: {str(error)}")
-
-# Initialize OpenRouter LLM
+# Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="anthropic/claude-3-haiku",  # Using Claude 3 Haiku as it's more stable for this use case
+    model="anthropic/claude-3-haiku",  # Using Claude 3 Haiku through OpenRouter
     temperature=0.0,
-    openai_api_base="https://openrouter.ai/api/v1",
-    openai_api_key=OPENROUTER_API_KEY,
+    openai_api_key="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",
+    base_url="https://openrouter.ai/api/v1",
     default_headers={
-        "HTTP-Referer": "localhost:8501",
-        "X-Title": "DataPilot",
+        "HTTP-Referer": "https://openrouter.ai",  # Required by OpenRouter
+        "X-Title": "DataPilot"
     }
 )
 

@@ -12,20 +12,27 @@ from utils import (
     read_image_file, 
     generate_dataset_overview, 
     preprocess_dataframe,
-    calculate_data_quality_score
+    calculate_data_quality_score,
+    format_large_number,
+    analyze_categorical_counts,
+    analyze_data
 )
 from chains import summarization_chain
+from prompts import get_prefix
+from langchain.tools import Tool
+from langchain.agents import AgentType
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="anthropic/claude-3-haiku",  # Using Claude 3 Haiku through OpenRouter
+    model="openai/gpt-4-turbo",  # Using GPT-4 Turbo through OpenRouter (with tool call support)
     temperature=0.0,
-    openai_api_key="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",
+    openai_api_key="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",
     base_url="https://openrouter.ai/api/v1",
     default_headers={
         "HTTP-Referer": "https://openrouter.ai",  # Required by OpenRouter
         "X-Title": "DataPilot"
-    }
+    },
+    tool_choice="auto"  # Added to support the new tools parameter
 )
 
 st.set_page_config(
@@ -69,7 +76,27 @@ with main_col:
             try:
                 with st.spinner('Reading file...'):
                     # Use the DataIngestionManager to read the file
-                    data = DataIngestionManager.read_file(file, file_type)
+                    try:
+                        data = DataIngestionManager.read_file(file, file_type)
+                    except ValueError as ve:
+                        st.error(f"Error reading file: {str(ve)}")
+                        st.info("Please check that:")
+                        st.markdown("""
+                        - The file is not empty
+                        - The file has proper column headers
+                        - The file uses a standard delimiter (comma, semicolon, tab, or pipe)
+                        - The file encoding is standard (UTF-8, Latin-1, etc.)
+                        """)
+                        st.stop()
+                    except Exception as e:
+                        st.error(f"Unexpected error reading file: {str(e)}")
+                        st.info("If this persists, please try:")
+                        st.markdown("""
+                        - Opening and resaving the file in a different text editor
+                        - Checking for any special characters in headers
+                        - Converting the file to a standard CSV format
+                        """)
+                        st.stop()
                     
                     # Handle multiple tables from SQLite
                     if isinstance(data, dict):
@@ -78,6 +105,19 @@ with main_col:
                     else:
                         df = data
                     
+                    # Verify that we have valid data
+                    if df.empty:
+                        st.error("The file appears to be empty or could not be read properly.")
+                        st.stop()
+                    elif len(df.columns) == 1:
+                        st.warning("Only one column was detected. This might indicate an issue with the file format or delimiter.")
+                        st.info("First few rows of the data:")
+                        st.dataframe(df.head())
+                        if st.button("Proceed anyway"):
+                            pass
+                        else:
+                            st.stop()
+                    
                     # Display basic file info
                     file_info = DataIngestionManager.get_file_info(df)
                     st.success(f"File loaded successfully: {file.name}")
@@ -85,9 +125,12 @@ with main_col:
                         st.write(f"Rows: {file_info['rows']}")
                         st.write(f"Columns: {file_info['columns']}")
                         st.write(f"Memory Usage: {file_info['memory_usage']}")
-                        
+                        st.write("Column Types:")
+                        for col, dtype in file_info['dtypes'].items():
+                            st.write(f"- {col}: {dtype}")
+                
             except Exception as e:
-                st.error(f"Error reading file: {str(e)}")
+                st.error(f"Error processing file: {str(e)}")
                 st.stop()
         
         st.divider()
@@ -321,25 +364,53 @@ with main_col:
             st.subheader("Data Quality Report", divider="rainbow")
             st.write("This feature is not implemented in the current version.")
 
-        from prompts import PREFIX
-
         # Initialize the agent executor with the pandas agent
         agent_executor = create_pandas_dataframe_agent(
             llm,
             df,
-            agent_type="tool-calling",
-            prefix=PREFIX.format(
+            agent_type="openai-tools",
+            prefix=get_prefix(
                 chat_history="\n".join([
                     f"{entry['role'].capitalize()}: {entry['content'][:200]}..." 
                     for entry in st.session_state.chat_history[-2:]
                 ]), 
-                additional_info_dataset=st.session_state.summarized_dataset_info[:300]
+                additional_info_dataset=st.session_state.summarized_dataset_info[:300] if st.session_state.summarized_dataset_info else ""
             ),
             verbose=True,
             handle_parsing_errors=True,
-            max_iterations=3,
-            max_execution_time=30,
-            allow_dangerous_code=True
+            max_iterations=20,
+            max_execution_time=180,
+            allow_dangerous_code=True,
+            extra_tools=[
+                Tool(
+                    name="format_large_number",
+                    func=format_large_number,
+                    description="Format large numbers with commas for better readability"
+                ),
+                Tool(
+                    name="analyze_categorical_counts",
+                    func=analyze_categorical_counts,
+                    description="Analyze and visualize counts by category in a dataset. Can filter by another column's value."
+                ),
+                Tool(
+                    name="analyze_data",
+                    func=analyze_data,
+                    description="""Generic data analysis tool that can:
+                        1. Filter data by any column and value
+                        2. Group data by any column
+                        3. Apply aggregations (max, min, mean, sum, count)
+                        4. Sort results
+                        5. Visualize results automatically
+                        6. Provide comprehensive statistics
+                        
+                        Example uses:
+                        - Find highest/lowest values in any column
+                        - Group and aggregate data
+                        - Analyze distributions
+                        - Compare categories
+                        - Find trends and patterns"""
+                )
+            ]
         )
 
         # Chat Interface
@@ -369,26 +440,39 @@ with main_col:
         if user_input:
             st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-            # Invoke the agent executor with the user's query
-            res = agent_executor.invoke(user_input)
+            # Add a loading indicator
+            with st.chat_message("assistant"):
+                message_placeholder = st.empty()
+                message_placeholder.markdown("Analyzing your data... ⏳")
             
-            # Process the response and check for multiple images
-            response_text = res['output']
-            image_tokens = re.findall(r'<image : r"(charts/[^"]+)">', response_text)
-            
-            # Format the response text
-            formatted_response = res['output']
-            
-            # Add images to the session state if they exist
-            if image_tokens:
-                for img_path in image_tokens:
-                    if os.path.isfile(img_path):
-                        st.session_state.img_list.append(img_path)
-            
-            st.session_state.chat_history.append({"role": "assistant", "content": formatted_response})
-            
-            # Display chat messages after new input
-            st.rerun()
+            try:
+                # Invoke the agent executor with the user's query
+                res = agent_executor.invoke({"input": user_input})
+                
+                # Process the response and check for multiple images
+                response_text = res['output']
+                image_tokens = re.findall(r'<image : r"(charts/[^"]+)">', response_text)
+                
+                # Format the response text
+                formatted_response = res['output']
+                
+                # Add images to the session state if they exist
+                if image_tokens:
+                    for img_path in image_tokens:
+                        if os.path.isfile(img_path):
+                            st.session_state.img_list.append(img_path)
+                        else:
+                            # If image doesn't exist, add a note to the response
+                            formatted_response += f"\n\nNote: Could not find image at {img_path}."
+                
+                st.session_state.chat_history.append({"role": "assistant", "content": formatted_response})
+                
+                # Display chat messages after new input
+                st.rerun()
+            except Exception as e:
+                error_message = f"Error processing your query: {str(e)}\n\nPlease try rephrasing your question or ask something else."
+                st.session_state.chat_history.append({"role": "assistant", "content": error_message})
+                st.rerun()
 
 with right_col:
     # st.write("Features")

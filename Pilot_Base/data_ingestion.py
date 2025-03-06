@@ -11,11 +11,67 @@ class DataIngestionManager:
     
     @staticmethod
     def read_csv(file) -> pd.DataFrame:
-        """Read CSV file with automatic encoding detection"""
+        """
+        Read CSV file with automatic encoding detection and delimiter inference.
+        Handles various CSV formats and provides detailed error messages.
+        """
         try:
-            return pd.read_csv(file)
+            # First try with default settings
+            df = pd.read_csv(file)
+            if len(df.columns) > 0:
+                return df
         except UnicodeDecodeError:
-            return pd.read_csv(file, encoding='latin1')
+            # Try different encodings
+            for encoding in ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']:
+                try:
+                    df = pd.read_csv(file, encoding=encoding)
+                    if len(df.columns) > 0:
+                        return df
+                except:
+                    continue
+        except pd.errors.EmptyDataError:
+            raise ValueError("The CSV file appears to be empty.")
+        except Exception as e:
+            # Try to infer delimiter if default comma doesn't work
+            try:
+                # Reset file pointer to the beginning
+                file.seek(0)
+                content = file.read().decode('utf-8')
+                
+                # Check first few lines to infer delimiter
+                first_lines = content.split('\n')[:5]
+                potential_delimiters = [',', ';', '\t', '|']
+                
+                # Try each delimiter
+                for delimiter in potential_delimiters:
+                    try:
+                        file.seek(0)  # Reset file pointer again
+                        df = pd.read_csv(file, sep=delimiter)
+                        if len(df.columns) > 0:
+                            return df
+                    except:
+                        continue
+                
+                # If we get here, no delimiter worked
+                raise ValueError(
+                    "Could not determine the correct delimiter. "
+                    "The file might not be a properly formatted CSV. "
+                    f"First few lines of the file:\n{chr(10).join(first_lines)}"
+                )
+            except Exception as inner_e:
+                raise ValueError(
+                    f"Error reading CSV file: {str(e)}\n"
+                    "Additional details:\n"
+                    f"- Original error: {str(inner_e)}\n"
+                    "- Make sure the file is a valid CSV file\n"
+                    "- Check if the file has proper column headers\n"
+                    "- Check if the file is not empty or corrupted"
+                )
+        
+        raise ValueError(
+            "Could not read the CSV file. The file might be empty, corrupted, "
+            "or not in the expected CSV format."
+        )
 
     @staticmethod
     def read_json(file) -> pd.DataFrame:

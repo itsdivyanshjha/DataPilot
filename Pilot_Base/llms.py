@@ -4,10 +4,18 @@ import streamlit as st
 from langchain_openai import ChatOpenAI
 import os
 
-# OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
-OPENAI_API_KEY = st.secrets['OPENAI_API_KEY'] # Setup your API Key
-chatopenai_llm = ChatOpenAI(model="gpt-3.5-turbo", openai_api_key=OPENAI_API_KEY, temperature=0.0)
-
+# Initialize OpenAI LLM through OpenRouter
+chatopenai_llm = ChatOpenAI(
+    model="openai/gpt-4-turbo",  # Using GPT-4 Turbo through OpenRouter (with tool call support)
+    temperature=0.0,
+    openai_api_key="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",
+    base_url="https://openrouter.ai/api/v1",
+    default_headers={
+        "HTTP-Referer": "https://openrouter.ai",  # Required by OpenRouter
+        "X-Title": "DataPilot"
+    },
+    tool_choice="auto"  # Added to support the new tools parameter
+)
 
 # -------------------GROQ--------------
 from langchain_groq import ChatGroq

@@ -5,14 +5,15 @@ import os
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="anthropic/claude-3-haiku",  # Using Claude 3 Haiku through OpenRouter
+    model="openai/gpt-4-turbo",  # Using GPT-4 Turbo through OpenRouter (with tool call support)
     temperature=0.0,
-    openai_api_key="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",
+    openai_api_key="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",
     base_url="https://openrouter.ai/api/v1",
     default_headers={
         "HTTP-Referer": "https://openrouter.ai",  # Required by OpenRouter
         "X-Title": "DataPilot"
-    }
+    },
+    tool_choice="auto"  # Added to support the new tools parameter
 )
 
 #-------------------Additonal Info Summarization Chain____________________

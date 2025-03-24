@@ -24,15 +24,15 @@ from langchain.agents import AgentType
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="openai/gpt-4-turbo",  # Using GPT-4 Turbo through OpenRouter (with tool call support)
+    model="openai/gpt-4-turbo",
     temperature=0.0,
-    openai_api_key="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",
+    openai_api_key="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",
     base_url="https://openrouter.ai/api/v1",
     default_headers={
-        "HTTP-Referer": "https://openrouter.ai",  # Required by OpenRouter
-        "X-Title": "DataPilot"
-    },
-    tool_choice="auto"  # Added to support the new tools parameter
+        "HTTP-Referer": "https://openrouter.ai",
+        "X-Title": "DataPilot",
+        "Authorization": "Bearer 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"
+    }
 )
 
 st.set_page_config(
@@ -67,7 +67,7 @@ with main_col:
         
         # File upload section with multiple file support
         st.write("Upload your data file")
-        supported_types = ['csv', 'json', 'xlsx', 'xls', 'xml', 'db', 'sqlite', 'yaml', 'yml']
+        supported_types = ['csv', 'json', 'xlsx', 'xls', 'yaml']
         file = st.file_uploader("Select File", type=supported_types)
         
         if file is not None:
@@ -401,14 +401,7 @@ with main_col:
                         3. Apply aggregations (max, min, mean, sum, count)
                         4. Sort results
                         5. Visualize results automatically
-                        6. Provide comprehensive statistics
-                        
-                        Example uses:
-                        - Find highest/lowest values in any column
-                        - Group and aggregate data
-                        - Analyze distributions
-                        - Compare categories
-                        - Find trends and patterns"""
+                        6. Provide comprehensive statistics"""
                 )
             ]
         )

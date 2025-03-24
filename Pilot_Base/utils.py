@@ -14,9 +14,9 @@ CHARTS_DIR = "charts"
 if not os.path.exists(CHARTS_DIR):
     os.makedirs(CHARTS_DIR)
 
-def check_image_file_exists(text):
+def check_image_file_exists(text: str) -> Union[list, int]:
     # Function to extract all image locations
-    def extract_image_locations(text):
+    def extract_image_locations(text: str) -> Union[list, None]:
         pattern = r'<image : r"(charts/[^"]+)">'
         matches = re.findall(pattern, text)
         return matches if matches else None
@@ -25,15 +25,12 @@ def check_image_file_exists(text):
     image_locations = extract_image_locations(text)
 
     if image_locations:
-        valid_images = []
-        for loc in image_locations:
-            if os.path.isfile(loc):
-                valid_images.append(loc)
+        valid_images = [loc for loc in image_locations if os.path.isfile(loc)]
         
         return valid_images if valid_images else 0
     return -1
 
-def display_images(image_paths):
+def display_images(image_paths: list) -> None:
     """Display multiple images with their download buttons"""
     if isinstance(image_paths, list):
         for img_path in image_paths:
@@ -57,7 +54,7 @@ text = """The chart has been saved at <image : r"charts/air_temp_machine_failure
 #---------------------
 
 # Function to read image file and prepare it for download
-def read_image_file(image_path):
+def read_image_file(image_path: str) -> Union[bytes, None]:
     """Read image file and prepare it for download"""
     try:
         with open(image_path, "rb") as image_file:
@@ -222,7 +219,7 @@ def process_hashtags(df_json, hashtag_column='hashtags'):
     
     return exploded_df
 
-def format_large_number(number):
+def format_large_number(number: Union[int, float]) -> str:
     """
     Format large numbers with commas for better readability.
     
@@ -236,7 +233,14 @@ def format_large_number(number):
     str
         Formatted number as string with commas
     """
-    return "{:,}".format(number)
+    try:
+        if isinstance(number, (int, float)):
+            if float(number).is_integer():
+                return f"{int(number):,d}"
+            return f"{float(number):,.2f}"
+        return str(number)
+    except (ValueError, TypeError):
+        return str(number)
 
 def analyze_hashtags(df_json, hashtag_column='hashtags', metric_column='likes'):
     """
@@ -570,7 +574,13 @@ def analyze_negative_posts_by_platform(df_json):
     
     return result
 
-def analyze_categorical_counts(df_json, category_column, count_column=None, value_to_count=None, title=None):
+def analyze_categorical_counts(
+    df_json: Union[pd.DataFrame, str],
+    category_column: str,
+    count_column: str = None,
+    value_to_count: Any = None,
+    title: str = None
+) -> Dict[str, Any]:
     """
     Analyze and visualize counts by category in a dataset.
     
@@ -589,91 +599,62 @@ def analyze_categorical_counts(df_json, category_column, count_column=None, valu
         
     Returns:
     --------
-    str
-        A string with the analysis results and path to the generated chart
+    dict
+        A dictionary containing analysis results and path to the generated chart
     """
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
-    # Convert JSON to DataFrame if needed
     if isinstance(df_json, str):
-        import json
-        df_dict = json.loads(df_json)
-        df = pd.DataFrame(df_dict)
+        df = pd.DataFrame(json.loads(df_json))
     else:
-        df = df_json
+        df = df_json.copy()
     
-    # Filter data if count_column and value_to_count are provided
-    if count_column and value_to_count is not None:
-        filtered_df = df[df[count_column] == value_to_count]
-    else:
-        filtered_df = df
+    if count_column and value_to_count:
+        df = df[df[count_column] == value_to_count]
     
-    # Group by category and count
-    if count_column:
-        category_stats = filtered_df.groupby(category_column).size().reset_index(name='count')
-    else:
-        category_stats = df.groupby(category_column).size().reset_index(name='count')
+    counts = df[category_column].value_counts()
+    total = len(df)
+    percentages = (counts / total * 100).round(2)
     
-    # Sort by count in descending order
-    category_stats = category_stats.sort_values(by='count', ascending=False)
-    
-    # Create visualization
-    plt.figure(figsize=(10, 6))
-    
-    # Create the bar plot with proper formatting
-    ax = sns.barplot(x=category_column, y='count', data=category_stats)
-    
-    # Add value labels on top of bars
-    for i, v in enumerate(category_stats['count']):
-        ax.text(i, v + 1, format_large_number(v), ha='center')
-    
-    # Set title and labels
-    if title:
-        plt.title(title, fontsize=16)
-    else:
-        plt.title(f'Count by {category_column}', fontsize=16)
-    plt.xlabel(category_column, fontsize=14)
-    plt.ylabel('Count', fontsize=14)
+    plt.figure(figsize=(12, 6))
+    ax = sns.barplot(x=counts.index[:10], y=counts.values[:10])
     plt.xticks(rotation=45, ha='right')
+    plt.title(title or f'Distribution of {category_column}')
+    
+    for i, v in enumerate(counts.values[:10]):
+        ax.text(i, v, f'{v}\n({percentages[i]}%)', ha='center', va='bottom')
+    
     plt.tight_layout()
     
-    # Save the chart
-    safe_column_name = re.sub(r'[^a-zA-Z0-9]', '_', category_column)
-    chart_path = f'charts/count_by_{safe_column_name}.png'
+    timestamp = int(time.time())
+    chart_path = f"charts/categorical_counts_{timestamp}.png"
     plt.savefig(chart_path)
     plt.close()
     
-    # Get the category with the highest count
-    top_category = category_stats.iloc[0][category_column]
-    top_count = category_stats.iloc[0]['count']
+    highest_category = counts.index[0]
+    highest_count = counts.values[0]
+    highest_percentage = percentages[0]
     
-    # Get counts for all categories
-    category_counts = {row[category_column]: row['count'] for _, row in category_stats.iterrows()}
-    
-    # Create a detailed response
-    if count_column and value_to_count is not None:
-        result = f"For {value_to_count} {count_column}, {top_category} has the highest count with {format_large_number(top_count)}.\n"
-    else:
-        result = f"{top_category} has the highest count with {format_large_number(top_count)}.\n"
-    
-    result += f"\nBreakdown by {category_column}:\n"
-    for category, count in category_counts.items():
-        result += f"- {category}: {format_large_number(count)}\n"
-    result += f"\n<image : r\"{chart_path}\">"
+    result = {
+        'highest_category': highest_category,
+        'highest_count': highest_count,
+        'highest_percentage': highest_percentage,
+        'chart_path': chart_path,
+        'counts': counts.to_dict(),
+        'percentages': percentages.to_dict()
+    }
     
     return result
 
-def analyze_data(df_json: Union[pd.DataFrame, str], 
-                filter_column: str = None,
-                filter_value: Any = None,
-                sort_column: str = None,
-                ascending: bool = True,
-                group_by: str = None,
-                agg_function: str = None,
-                top_n: int = 5,
-                title: str = None) -> Dict[str, Any]:
+def analyze_data(
+    df_json: Union[pd.DataFrame, str], 
+    filter_column: str = None,
+    filter_value: Any = None,
+    sort_column: str = None,
+    ascending: bool = True,
+    group_by: str = None,
+    agg_function: str = None,
+    top_n: int = 5,
+    title: str = None
+) -> Dict[str, Any]:
     """
     Enhanced generic function to analyze data with comprehensive analysis capabilities.
     

@@ -3,11 +3,12 @@ import json
 import sqlite3
 import yaml
 import xml.etree.ElementTree as ET
-from typing import Union, Dict, Any
+from typing import Union, Dict, Any, List
 import streamlit as st
 
 class DataIngestionManager:
-    """Manages data ingestion from various sources and formats"""
+    SUPPORTED_ENCODINGS = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+    POTENTIAL_DELIMITERS = [',', ';', '\t', '|']
     
     @staticmethod
     def read_csv(file) -> pd.DataFrame:
@@ -16,13 +17,11 @@ class DataIngestionManager:
         Handles various CSV formats and provides detailed error messages.
         """
         try:
-            # First try with default settings
             df = pd.read_csv(file)
             if len(df.columns) > 0:
                 return df
         except UnicodeDecodeError:
-            # Try different encodings
-            for encoding in ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']:
+            for encoding in DataIngestionManager.SUPPORTED_ENCODINGS:
                 try:
                     df = pd.read_csv(file, encoding=encoding)
                     if len(df.columns) > 0:
@@ -32,60 +31,40 @@ class DataIngestionManager:
         except pd.errors.EmptyDataError:
             raise ValueError("The CSV file appears to be empty.")
         except Exception as e:
-            # Try to infer delimiter if default comma doesn't work
             try:
-                # Reset file pointer to the beginning
                 file.seek(0)
                 content = file.read().decode('utf-8')
-                
-                # Check first few lines to infer delimiter
                 first_lines = content.split('\n')[:5]
-                potential_delimiters = [',', ';', '\t', '|']
                 
-                # Try each delimiter
-                for delimiter in potential_delimiters:
+                for delimiter in DataIngestionManager.POTENTIAL_DELIMITERS:
                     try:
-                        file.seek(0)  # Reset file pointer again
+                        file.seek(0)
                         df = pd.read_csv(file, sep=delimiter)
                         if len(df.columns) > 0:
                             return df
                     except:
                         continue
                 
-                # If we get here, no delimiter worked
                 raise ValueError(
-                    "Could not determine the correct delimiter. "
-                    "The file might not be a properly formatted CSV. "
-                    f"First few lines of the file:\n{chr(10).join(first_lines)}"
+                    f"Could not determine the correct delimiter. File preview:\n{chr(10).join(first_lines)}"
                 )
             except Exception as inner_e:
                 raise ValueError(
-                    f"Error reading CSV file: {str(e)}\n"
-                    "Additional details:\n"
-                    f"- Original error: {str(inner_e)}\n"
-                    "- Make sure the file is a valid CSV file\n"
-                    "- Check if the file has proper column headers\n"
-                    "- Check if the file is not empty or corrupted"
+                    f"Error reading CSV: {str(e)}\nDetails: {str(inner_e)}\n"
+                    "Check file validity, headers, and content."
                 )
         
-        raise ValueError(
-            "Could not read the CSV file. The file might be empty, corrupted, "
-            "or not in the expected CSV format."
-        )
+        raise ValueError("Could not read the CSV file. File might be empty or corrupted.")
 
     @staticmethod
     def read_json(file) -> pd.DataFrame:
         """Read JSON file with support for different structures"""
         try:
-            # Try reading as regular JSON
             data = json.load(file)
             if isinstance(data, list):
                 return pd.DataFrame(data)
-            elif isinstance(data, dict):
-                # Handle nested JSON structures
-                return pd.json_normalize(data)
-        except Exception as e:
-            # Try reading as JSON lines
+            return pd.json_normalize(data)
+        except:
             return pd.read_json(file, lines=True)
 
     @staticmethod
@@ -94,18 +73,15 @@ class DataIngestionManager:
         xls = pd.ExcelFile(file)
         if len(xls.sheet_names) == 1:
             return pd.read_excel(file)
-        else:
-            sheet_name = st.selectbox("Select Sheet", xls.sheet_names)
-            return pd.read_excel(file, sheet_name=sheet_name)
+        sheet_name = st.selectbox("Select Sheet", xls.sheet_names)
+        return pd.read_excel(file, sheet_name=sheet_name)
 
     @staticmethod
     def read_xml(file) -> pd.DataFrame:
         """Read XML file and convert to DataFrame"""
         tree = ET.parse(file)
         root = tree.getroot()
-        data = []
-        for child in root:
-            data.append({elem.tag: elem.text for elem in child})
+        data = [{elem.tag: elem.text for elem in child} for child in root]
         return pd.DataFrame(data)
 
     @staticmethod

@@ -45,6 +45,18 @@ Key Guidelines:
    - For questions about "most", "highest", etc., provide exact values and show top results
    - When comparing metrics, use appropriate visualizations
 
+9. For RAG-based analysis:
+   - Use the get_dataset_context tool to retrieve relevant context for queries
+   - Use the get_dataset_info tool to understand the dataset structure
+   - Incorporate retrieved context into your analysis and responses
+   - When switching between different aspects of the data, use context to maintain consistency
+
+10. For multi-column visualizations:
+    - Support complex visualizations with multiple columns
+    - Use appropriate chart types for different data types
+    - Include clear legends and labels for all columns
+    - Consider using subplots for complex comparisons
+
 Additional Dataset Info:
 {additional_info_dataset}
 

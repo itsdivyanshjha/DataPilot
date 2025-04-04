@@ -5,14 +5,14 @@ import os
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="openai/gpt-4-turbo",
+    model="openai/gpt-4o",
     temperature=0.0,
-    openai_api_key="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",
+    openai_api_key="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",
     base_url="https://openrouter.ai/api/v1",
     default_headers={
         "HTTP-Referer": "https://openrouter.ai",
         "X-Title": "DataPilot",
-        "Authorization": "Bearer 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"
+        "Authorization": "Bearer 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"
     }
 )
 

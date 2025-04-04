@@ -21,23 +21,44 @@ from chains import summarization_chain
 from prompts import get_prefix
 from langchain.tools import Tool
 from langchain.agents import AgentType
+from rag_manager import RAGManager
+import tempfile
+import logging
+import warnings
+import matplotlib.font_manager as fm
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
+warnings.filterwarnings('ignore', category=UserWarning, module='langchain_experimental')
+
+# Configure matplotlib to use a font that supports emojis
+plt.rcParams['font.family'] = 'DejaVu Sans'
+plt.rcParams['axes.unicode_minus'] = False
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="openai/gpt-4-turbo",
+    model="openai/gpt-4o",
     temperature=0.0,
-    openai_api_key="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",
+    openai_api_key="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",
     base_url="https://openrouter.ai/api/v1",
     default_headers={
         "HTTP-Referer": "https://openrouter.ai",
         "X-Title": "DataPilot",
-        "Authorization": "Bearer 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"
+        "Authorization": "Bearer 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"
     }
 )
 
+# Initialize RAG Manager with OpenAI embeddings
+rag_manager = RAGManager()
+
 st.set_page_config(
     page_title="DataPilot",
-    page_icon="🧞",
+    page_icon="📊",
+    layout="wide"
 )
 
 # Session Variables
@@ -56,6 +77,12 @@ if 'img_flag' not in st.session_state:
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
+if 'rag_initialized' not in st.session_state:
+    st.session_state.rag_initialized = False
+
+if 'df' not in st.session_state:
+    st.session_state.df = None
+
 # 2 Columns, one with the sidebar+chat area and other with features
 main_col, right_col = st.columns([4, 1])
 
@@ -67,76 +94,63 @@ with main_col:
         
         # File upload section with multiple file support
         st.write("Upload your data file")
-        supported_types = ['csv', 'json', 'xlsx', 'xls', 'yaml']
-        file = st.file_uploader("Select File", type=supported_types)
+        st.header("Upload Dataset")
+        uploaded_file = st.file_uploader(
+            "Choose a file",
+            type=['csv', 'json', 'xlsx', 'xls', 'xml', 'db', 'sqlite', 'yaml', 'yml']
+        )
         
-        if file is not None:
-            file_type = file.name.split('.')[-1].lower()
-            
+        if uploaded_file is not None:
             try:
+                # Get file extension
+                file_extension = uploaded_file.name.split('.')[-1].lower()
+                
+                # Read the file
                 with st.spinner('Reading file...'):
-                    # Use the DataIngestionManager to read the file
+                    df = DataIngestionManager.read_file(uploaded_file, file_extension)
+                
+                # Store the DataFrame in session state
+                st.session_state.df = df
+                
+                # Clear previous RAG knowledge base and create new one
+                with st.spinner('Initializing RAG system...'):
                     try:
-                        data = DataIngestionManager.read_file(file, file_type)
-                    except ValueError as ve:
-                        st.error(f"Error reading file: {str(ve)}")
-                        st.info("Please check that:")
-                        st.markdown("""
-                        - The file is not empty
-                        - The file has proper column headers
-                        - The file uses a standard delimiter (comma, semicolon, tab, or pipe)
-                        - The file encoding is standard (UTF-8, Latin-1, etc.)
-                        """)
-                        st.stop()
-                    except Exception as e:
-                        st.error(f"Unexpected error reading file: {str(e)}")
-                        st.info("If this persists, please try:")
-                        st.markdown("""
-                        - Opening and resaving the file in a different text editor
-                        - Checking for any special characters in headers
-                        - Converting the file to a standard CSV format
-                        """)
-                        st.stop()
-                    
-                    # Handle multiple tables from SQLite
-                    if isinstance(data, dict):
-                        selected_table = st.selectbox("Select Table", list(data.keys()))
-                        df = data[selected_table]
-                    else:
-                        df = data
-                    
-                    # Verify that we have valid data
-                    if df.empty:
-                        st.error("The file appears to be empty or could not be read properly.")
-                        st.stop()
-                    elif len(df.columns) == 1:
-                        st.warning("Only one column was detected. This might indicate an issue with the file format or delimiter.")
-                        st.info("First few rows of the data:")
-                        st.dataframe(df.head())
-                        if st.button("Proceed anyway"):
-                            pass
-                        else:
-                            st.stop()
-                    
-                    # Display basic file info
-                    file_info = DataIngestionManager.get_file_info(df)
-                    st.success(f"File loaded successfully: {file.name}")
-                    with st.expander("File Information"):
-                        st.write(f"Rows: {file_info['rows']}")
-                        st.write(f"Columns: {file_info['columns']}")
-                        st.write(f"Memory Usage: {file_info['memory_usage']}")
-                        st.write("Column Types:")
-                        for col, dtype in file_info['dtypes'].items():
-                            st.write(f"- {col}: {dtype}")
+                        rag_manager.clear()
+                        rag_manager.create_knowledge_base(df)
+                        st.session_state.rag_initialized = True
+                        st.success("RAG system initialized successfully!")
+                    except Exception as rag_error:
+                        st.warning(f"RAG system initialization failed: {str(rag_error)}")
+                        st.info("You can still use basic data analysis features.")
+                        st.session_state.rag_initialized = False
+                
+                # Display file information
+                file_info = DataIngestionManager.get_file_info(df)
+                st.success("File uploaded successfully!")
+                st.write(f"Rows: {file_info['rows']:,}")
+                st.write(f"Columns: {file_info['columns']:,}")
+                st.write(f"Memory Usage: {file_info['memory_usage']}")
+                
+                # Display data preview
+                st.subheader("Data Preview")
+                st.dataframe(df.head())
                 
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
-                st.stop()
+                st.info("Please check that:")
+                st.markdown("""
+                - The file is not empty
+                - The file has proper column headers
+                - The file uses a standard delimiter (comma, semicolon, tab, or pipe)
+                - The file encoding is standard (UTF-8, Latin-1, etc.)
+                """)
+                st.session_state.df = None
+                st.session_state.rag_initialized = False
         
         st.divider()
 
     # If the user uploads a file
-    if file is not None:
+    if uploaded_file is not None:
         # Data preprocessing and overview generation
         with st.spinner('Analyzing dataset...'):
             df = preprocess_dataframe(df)
@@ -185,6 +199,18 @@ with main_col:
         
         # Data Quality Insights
         st.subheader("🔍 Data Quality Overview")
+        st.markdown("""
+The Data Quality Score is calculated based on three key metrics:
+
+1. **Completeness (40% weight)**: Measures how much data is not null/missing
+2. **Uniqueness (30% weight)**: Evaluates the diversity of values in each column
+3. **Consistency (30% weight)**: Checks if data types match expected formats
+
+Additional metrics include:
+- Null value percentage
+- Duplicate row percentage
+- Data type distribution
+""")
         quality_metrics, overall_score = calculate_data_quality_score(df)
         st.progress(overall_score/100, text=f"Overall Data Quality Score: {overall_score:.1f}%")
         
@@ -358,13 +384,80 @@ with main_col:
         
         elif quick_action == "Summary Statistics":
             st.subheader("Summary Statistics", divider="rainbow")
-            st.dataframe(df.describe(), use_container_width=True)
+            try:
+                # Get numeric columns only for summary statistics
+                numeric_df = df.select_dtypes(include=['int64', 'float64'])
+                
+                if not numeric_df.empty:
+                    # Calculate and display basic statistics for each numeric column
+                    st.markdown("### Numeric Columns Analysis")
+                    
+                    for column in numeric_df.columns:
+                        st.markdown(f"#### {column}")
+                        col_data = numeric_df[column]
+                        
+                        # Create a clean statistics dictionary
+                        stats = {
+                            "Count": len(col_data),
+                            "Mean": col_data.mean(),
+                            "Std": col_data.std(),
+                            "Min": col_data.min(),
+                            "25%": col_data.quantile(0.25),
+                            "50% (Median)": col_data.median(),
+                            "75%": col_data.quantile(0.75),
+                            "Max": col_data.max()
+                        }
+                        
+                        # Convert to DataFrame for better display
+                        stats_df = pd.DataFrame({
+                            "Statistic": list(stats.keys()),
+                            "Value": [f"{v:.2f}" if isinstance(v, (float, int)) else str(v) for v in stats.values()]
+                        })
+                        
+                        # Display the statistics
+                        st.table(stats_df)
+                        
+                        # Add a visual separator
+                        st.markdown("---")
+                    
+                    # Display correlation matrix if there are multiple numeric columns
+                    if len(numeric_df.columns) > 1:
+                        st.markdown("### Correlation Matrix")
+                        corr_matrix = numeric_df.corr().round(2)
+                        st.table(corr_matrix)
+                else:
+                    st.info("No numeric columns found in the dataset for summary statistics.")
+                    
+                # Display categorical columns summary if any exist
+                categorical_df = df.select_dtypes(include=['object', 'category'])
+                if not categorical_df.empty:
+                    st.markdown("### Categorical Columns Summary")
+                    for col in categorical_df.columns:
+                        st.markdown(f"#### {col}")
+                        value_counts = categorical_df[col].value_counts()
+                        total = len(categorical_df[col])
+                        
+                        # Create summary DataFrame
+                        cat_summary = pd.DataFrame({
+                            "Value": value_counts.index[:5],  # Show top 5 categories
+                            "Count": value_counts.values[:5],
+                            "Percentage": (value_counts.values[:5] / total * 100).round(2)
+                        })
+                        
+                        st.table(cat_summary)
+                        if len(value_counts) > 5:
+                            st.info(f"Showing top 5 out of {len(value_counts)} unique values")
+                        st.markdown("---")
+                
+            except Exception as e:
+                st.error(f"Error displaying summary statistics: {str(e)}")
+                st.info("Please try a different analysis option or check your data format.")
         
         elif quick_action == "Data Quality Report":
             st.subheader("Data Quality Report", divider="rainbow")
             st.write("This feature is not implemented in the current version.")
 
-        # Initialize the agent executor with the pandas agent
+        # Initialize the agent executor with the pandas agent and RAG context
         agent_executor = create_pandas_dataframe_agent(
             llm,
             df,
@@ -385,23 +478,99 @@ with main_col:
                 Tool(
                     name="format_large_number",
                     func=format_large_number,
-                    description="Format large numbers with commas for better readability"
+                    description="Format large numbers with commas for better readability. Example: 1000000 -> 1,000,000"
                 ),
                 Tool(
                     name="analyze_categorical_counts",
-                    func=analyze_categorical_counts,
-                    description="Analyze and visualize counts by category in a dataset. Can filter by another column's value."
+                    func=lambda df_json, category_column, count_column=None, value_to_count=None, title=None, top_n=None, sort_by='count', ascending=False, include_percentages=True, chart_type='bar': analyze_categorical_counts(
+                        df_json=df_json,
+                        category_column=category_column,
+                        count_column=count_column,
+                        value_to_count=value_to_count,
+                        title=title,
+                        top_n=top_n,
+                        sort_by=sort_by,
+                        ascending=ascending,
+                        include_percentages=include_percentages,
+                        chart_type=chart_type
+                    ),
+                    description="""Analyze and visualize the distribution of values in any categorical column. 
+                    This tool can:
+                    1. Show the distribution of any categorical column
+                    2. Filter the distribution based on another column's value
+                    3. Sort results by count or category name
+                    4. Show top N categories
+                    5. Display percentages
+                    6. Create bar or pie charts
+                    
+                    Parameters:
+                    - category_column: The column to analyze (required)
+                    - count_column: Optional column to filter by
+                    - value_to_count: Optional value to filter for
+                    - title: Optional custom chart title
+                    - top_n: Optional number of top categories to show
+                    - sort_by: 'count' or 'category' (default: 'count')
+                    - ascending: Sort order (default: False)
+                    - include_percentages: Show percentages (default: True)
+                    - chart_type: 'bar' or 'pie' (default: 'bar')
+                    
+                    Returns a dictionary with counts, percentages, and chart path."""
                 ),
                 Tool(
                     name="analyze_data",
                     func=analyze_data,
-                    description="""Generic data analysis tool that can:
-                        1. Filter data by any column and value
-                        2. Group data by any column
-                        3. Apply aggregations (max, min, mean, sum, count)
-                        4. Sort results
-                        5. Visualize results automatically
-                        6. Provide comprehensive statistics"""
+                    description="""Perform comprehensive data analysis on any dataset. This tool can:
+                    1. Filter data by any column and value
+                    2. Group data by any column
+                    3. Calculate statistics (max, min, mean, sum, count)
+                    4. Sort results by any column
+                    5. Create visualizations
+                    6. Generate summary statistics
+                    
+                    Parameters:
+                    - filter_column: Column to filter by
+                    - filter_value: Value to filter for
+                    - group_by: Column to group by
+                    - agg_function: 'max', 'min', 'mean', 'sum', 'count'
+                    - sort_column: Column to sort by
+                    - ascending: Sort order
+                    - top_n: Number of results to return
+                    
+                    Returns comprehensive analysis results with visualizations."""
+                ),
+                Tool(
+                    name="get_dataset_context",
+                    func=lambda x: rag_manager.get_relevant_context(x) if st.session_state.rag_initialized else [],
+                    description="""Get relevant context from the dataset for a given query. This tool:
+                    1. Uses semantic search to find relevant information
+                    2. Returns context about column meanings, data relationships, and patterns
+                    3. Helps understand the dataset structure and content
+                    4. Provides insights about data quality and characteristics
+                    
+                    Always use this tool first to understand the dataset context before performing analysis."""
+                ),
+                Tool(
+                    name="get_dataset_info",
+                    func=lambda x: rag_manager.get_dataset_info() if st.session_state.rag_initialized else {},
+                    description="""Get comprehensive information about the current dataset. This tool:
+                    1. Returns column names and data types
+                    2. Provides basic statistics for each column
+                    3. Shows data quality metrics
+                    4. Identifies relationships between columns
+                    5. Highlights important patterns and trends
+                    
+                    Use this tool to understand the dataset structure before analysis."""
+                ),
+                Tool(
+                    name="get_column_semantics",
+                    func=lambda x: rag_manager.get_column_semantics(x) if st.session_state.rag_initialized else {},
+                    description="""Get semantic understanding of specific columns. This tool:
+                    1. Explains the meaning and purpose of columns
+                    2. Identifies relationships between columns
+                    3. Provides context about data values
+                    4. Suggests relevant analysis approaches
+                    
+                    Use this tool to understand specific columns before analyzing them."""
                 )
             ]
         )

@@ -162,13 +162,35 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     for col in categorical_cols:
         df[col] = df[col].fillna(df[col].mode()[0] if not df[col].mode().empty else 'Unknown')
     
-    # Convert date columns
+    # Convert date columns with consistent format
+    date_patterns = [
+        r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}',
+        r'\d{4}-\d{2}-\d{2}',
+        r'\d{2}/\d{2}/\d{4}',
+        r'\d{2}-\d{2}-\d{4}'
+    ]
+    
     for col in df.columns:
         if df[col].dtype == 'object':
-            try:
-                df[col] = pd.to_datetime(df[col])
-            except:
-                pass
+            # Check if column contains dates
+            sample = df[col].dropna().head(100)
+            if not sample.empty:
+                is_date = any(sample.astype(str).str.match(pattern).any() for pattern in date_patterns)
+                if is_date:
+                    try:
+                        df[col] = pd.to_datetime(df[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+                    except:
+                        try:
+                            df[col] = pd.to_datetime(df[col], format='%Y-%m-%d', errors='coerce')
+                        except:
+                            try:
+                                df[col] = pd.to_datetime(df[col], format='%d/%m/%Y', errors='coerce')
+                            except:
+                                try:
+                                    df[col] = pd.to_datetime(df[col], format='%d-%m-%Y', errors='coerce')
+                                except:
+                                    # If all format attempts fail, keep as string
+                                    pass
     
     return df
 
@@ -579,70 +601,136 @@ def analyze_categorical_counts(
     category_column: str,
     count_column: str = None,
     value_to_count: Any = None,
-    title: str = None
+    title: str = None,
+    top_n: int = None,
+    sort_by: str = 'count',
+    ascending: bool = False,
+    include_percentages: bool = True,
+    chart_type: str = 'bar'
 ) -> Dict[str, Any]:
     """
-    Analyze and visualize counts by category in a dataset.
+    Analyze and visualize categorical data in a dataset.
     
     Parameters:
     -----------
     df_json : str or pandas.DataFrame
         The dataframe containing the data, or a JSON string representation
     category_column : str
-        The column containing categories to group by
+        The column containing categories to analyze
     count_column : str, optional
         If provided, the column to filter by before counting
     value_to_count : any, optional
         If provided, the specific value in count_column to count
     title : str, optional
         Custom title for the visualization
+    top_n : int, optional
+        Number of top categories to show (if None, shows all)
+    sort_by : str, optional
+        How to sort the results ('count' or 'category')
+    ascending : bool, optional
+        Whether to sort in ascending order
+    include_percentages : bool, optional
+        Whether to include percentages in the visualization
+    chart_type : str, optional
+        Type of chart to create ('bar' or 'pie')
         
     Returns:
     --------
     dict
         A dictionary containing analysis results and path to the generated chart
     """
-    if isinstance(df_json, str):
-        df = pd.DataFrame(json.loads(df_json))
-    else:
-        df = df_json.copy()
-    
-    if count_column and value_to_count:
-        df = df[df[count_column] == value_to_count]
-    
-    counts = df[category_column].value_counts()
-    total = len(df)
-    percentages = (counts / total * 100).round(2)
-    
-    plt.figure(figsize=(12, 6))
-    ax = sns.barplot(x=counts.index[:10], y=counts.values[:10])
-    plt.xticks(rotation=45, ha='right')
-    plt.title(title or f'Distribution of {category_column}')
-    
-    for i, v in enumerate(counts.values[:10]):
-        ax.text(i, v, f'{v}\n({percentages[i]}%)', ha='center', va='bottom')
-    
-    plt.tight_layout()
-    
-    timestamp = int(time.time())
-    chart_path = f"charts/categorical_counts_{timestamp}.png"
-    plt.savefig(chart_path)
-    plt.close()
-    
-    highest_category = counts.index[0]
-    highest_count = counts.values[0]
-    highest_percentage = percentages[0]
-    
-    result = {
-        'highest_category': highest_category,
-        'highest_count': highest_count,
-        'highest_percentage': highest_percentage,
-        'chart_path': chart_path,
-        'counts': counts.to_dict(),
-        'percentages': percentages.to_dict()
-    }
-    
-    return result
+    try:
+        if isinstance(df_json, str):
+            df = pd.DataFrame(json.loads(df_json))
+        else:
+            df = df_json.copy()
+        
+        # Validate required column exists
+        if category_column not in df.columns:
+            raise ValueError(f"Column '{category_column}' not found in dataset")
+        
+        # Apply filtering if specified
+        if count_column and value_to_count:
+            if count_column not in df.columns:
+                raise ValueError(f"Filter column '{count_column}' not found in dataset")
+            df = df[df[count_column] == value_to_count]
+        
+        # Calculate counts and percentages
+        counts = df[category_column].value_counts()
+        total = len(df)
+        percentages = (counts / total * 100).round(2)
+        
+        # Sort results
+        if sort_by == 'category':
+            counts = counts.sort_index(ascending=ascending)
+            percentages = percentages[counts.index]
+        else:  # sort by count
+            counts = counts.sort_values(ascending=ascending)
+            percentages = percentages[counts.index]
+        
+        # Limit to top N if specified
+        if top_n is not None:
+            counts = counts.head(top_n)
+            percentages = percentages.head(top_n)
+        
+        # Create visualization
+        plt.figure(figsize=(12, 6))
+        
+        if chart_type == 'bar':
+            ax = sns.barplot(x=counts.index, y=counts.values)
+            plt.xticks(rotation=45, ha='right')
+            
+            # Add value labels on top of bars
+            if include_percentages:
+                for i, v in enumerate(counts.values):
+                    ax.text(i, v, f'{v}\n({percentages[i]}%)', ha='center', va='bottom')
+            else:
+                for i, v in enumerate(counts.values):
+                    ax.text(i, v, str(v), ha='center', va='bottom')
+                    
+        elif chart_type == 'pie':
+            plt.pie(counts.values, labels=counts.index, autopct='%1.1f%%' if include_percentages else None)
+            plt.axis('equal')
+        
+        # Set title
+        if title:
+            plt.title(title)
+        else:
+            if count_column and value_to_count:
+                plt.title(f'Distribution of {category_column} for {count_column} = {value_to_count}')
+            else:
+                plt.title(f'Distribution of {category_column}')
+        
+        plt.tight_layout()
+        
+        # Save the chart
+        timestamp = int(time.time())
+        chart_path = f"charts/categorical_counts_{timestamp}.png"
+        plt.savefig(chart_path)
+        plt.close()
+        
+        # Prepare results
+        result = {
+            'highest_category': counts.index[0],
+            'highest_count': counts.values[0],
+            'highest_percentage': percentages[0],
+            'chart_path': chart_path,
+            'counts': counts.to_dict(),
+            'percentages': percentages.to_dict(),
+            'total_count': total,
+            'summary': {
+                'total_categories': len(counts),
+                'unique_values': df[category_column].nunique(),
+                'missing_values': df[category_column].isnull().sum(),
+                'missing_percentage': (df[category_column].isnull().sum() / total * 100).round(2)
+            }
+        }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in analyze_categorical_counts: {str(e)}")
+        raise ValueError(f"Error analyzing categorical counts: {str(e)}")
 
 def analyze_data(
     df_json: Union[pd.DataFrame, str], 

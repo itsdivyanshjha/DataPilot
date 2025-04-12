@@ -901,3 +901,183 @@ def analyze_data(
             "results": None,
             "visualization_path": None
         }
+
+def create_generalized_visualization(
+    df: pd.DataFrame,
+    x_column: str,
+    y_column: str = None,
+    filter_column: str = None,
+    filter_value: Any = None,
+    chart_type: str = 'bar',
+    title: str = None,
+    x_label: str = None,
+    y_label: str = None,
+    top_n: int = None,
+    sort_by: str = 'count',
+    ascending: bool = False,
+    include_percentages: bool = True
+) -> Dict[str, Any]:
+    """
+    Create a generalized visualization that can handle any dataset structure.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The input dataframe
+    x_column : str
+        The column to use for x-axis
+    y_column : str, optional
+        The column to use for y-axis (for scatter plots or line charts)
+    filter_column : str, optional
+        Column to filter by
+    filter_value : any, optional
+        Value to filter for
+    chart_type : str, optional
+        Type of chart ('bar', 'pie', 'scatter', 'line', 'hist')
+    title : str, optional
+        Custom title for the visualization
+    x_label : str, optional
+        Custom x-axis label
+    y_label : str, optional
+        Custom y-axis label
+    top_n : int, optional
+        Number of top values to show
+    sort_by : str, optional
+        How to sort the results ('count' or 'value')
+    ascending : bool, optional
+        Whether to sort in ascending order
+    include_percentages : bool, optional
+        Whether to include percentages in the visualization
+        
+    Returns:
+    --------
+    dict
+        A dictionary containing the visualization path and analysis results
+    """
+    try:
+        # Create a copy of the dataframe to avoid modifying the original
+        df = df.copy()
+        
+        # Validate columns exist
+        if x_column not in df.columns:
+            raise ValueError(f"Column '{x_column}' not found in dataset")
+        if y_column and y_column not in df.columns:
+            raise ValueError(f"Column '{y_column}' not found in dataset")
+        if filter_column and filter_column not in df.columns:
+            raise ValueError(f"Filter column '{filter_column}' not found in dataset")
+        
+        # Apply filtering if specified
+        if filter_column and filter_value is not None:
+            df = df[df[filter_column] == filter_value]
+        
+        # Handle different chart types
+        plt.figure(figsize=(12, 6))
+        
+        if chart_type in ['bar', 'pie']:
+            # For categorical data
+            if y_column:
+                # If y_column is specified, use it for values
+                counts = df.groupby(x_column)[y_column].sum()
+            else:
+                # Otherwise, count occurrences
+                counts = df[x_column].value_counts()
+            
+            # Calculate percentages
+            total = counts.sum()
+            percentages = (counts / total * 100).round(2)
+            
+            # Sort results
+            if sort_by == 'value':
+                counts = counts.sort_values(ascending=ascending)
+                percentages = percentages[counts.index]
+            else:  # sort by count
+                counts = counts.sort_values(ascending=ascending)
+                percentages = percentages[counts.index]
+            
+            # Limit to top N if specified
+            if top_n is not None:
+                counts = counts.head(top_n)
+                percentages = percentages.head(top_n)
+            
+            if chart_type == 'bar':
+                ax = sns.barplot(x=counts.index, y=counts.values)
+                plt.xticks(rotation=45, ha='right')
+                
+                # Add value labels
+                if include_percentages:
+                    for i, v in enumerate(counts.values):
+                        ax.text(i, v, f'{v}\n({percentages[i]}%)', ha='center', va='bottom')
+                else:
+                    for i, v in enumerate(counts.values):
+                        ax.text(i, v, str(v), ha='center', va='bottom')
+            
+            elif chart_type == 'pie':
+                plt.pie(counts.values, labels=counts.index, autopct='%1.1f%%' if include_percentages else None)
+                plt.axis('equal')
+        
+        elif chart_type == 'scatter':
+            if not y_column:
+                raise ValueError("y_column is required for scatter plots")
+            sns.scatterplot(data=df, x=x_column, y=y_column)
+        
+        elif chart_type == 'line':
+            if not y_column:
+                raise ValueError("y_column is required for line plots")
+            sns.lineplot(data=df, x=x_column, y=y_column)
+        
+        elif chart_type == 'hist':
+            sns.histplot(data=df, x=x_column, bins=30)
+        
+        # Set labels and title
+        plt.xlabel(x_label or x_column)
+        if y_label:
+            plt.ylabel(y_label)
+        elif y_column:
+            plt.ylabel(y_column)
+        elif chart_type in ['bar', 'pie']:
+            plt.ylabel('Count')
+        
+        if title:
+            plt.title(title)
+        else:
+            title_parts = []
+            if filter_column and filter_value is not None:
+                title_parts.append(f"for {filter_column} = {filter_value}")
+            if chart_type in ['bar', 'pie']:
+                title_parts.append(f"Distribution of {x_column}")
+            plt.title(' '.join(title_parts))
+        
+        plt.tight_layout()
+        
+        # Save the chart
+        timestamp = int(time.time())
+        chart_path = f"charts/visualization_{timestamp}.png"
+        os.makedirs("charts", exist_ok=True)
+        plt.savefig(chart_path)
+        plt.close()
+        
+        # Prepare results
+        result = {
+            'chart_path': chart_path,
+            'analysis': {
+                'total_records': len(df),
+                'unique_values': df[x_column].nunique(),
+                'missing_values': df[x_column].isnull().sum(),
+                'missing_percentage': (df[x_column].isnull().sum() / len(df) * 100).round(2)
+            }
+        }
+        
+        if chart_type in ['bar', 'pie']:
+            result['analysis'].update({
+                'counts': counts.to_dict(),
+                'percentages': percentages.to_dict(),
+                'highest_value': counts.index[0],
+                'highest_count': counts.values[0],
+                'highest_percentage': percentages[0]
+            })
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in create_generalized_visualization: {str(e)}")
+        raise ValueError(f"Error creating visualization: {str(e)}")

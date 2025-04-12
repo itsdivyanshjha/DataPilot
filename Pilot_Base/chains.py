@@ -1,18 +1,18 @@
 from langchain.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_openai import ChatOpenAI
-import os
+from config import Config
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="openai/gpt-4o",
+    model=Config.get_openai_api_model(),
     temperature=0.0,
-    openai_api_key="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",
-    base_url="https://openrouter.ai/api/v1",
+    openai_api_key=Config.get_openai_api_key(),
+    base_url=Config.get_openai_api_base_url(),
     default_headers={
-        "HTTP-Referer": "https://openrouter.ai",
-        "X-Title": "DataPilot",
-        "Authorization": "Bearer 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"
+        "HTTP-Referer": Config.get_http_referer(),
+        "X-Title": Config.get_x_title(),
+        "Authorization": f"Bearer {Config.get_openai_api_key()}"
     }
 )
 

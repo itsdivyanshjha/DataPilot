@@ -15,13 +15,15 @@ from utils import (
     calculate_data_quality_score,
     format_large_number,
     analyze_categorical_counts,
-    analyze_data
+    analyze_data,
+    create_generalized_visualization
 )
 from chains import summarization_chain
 from prompts import get_prefix
 from langchain.tools import Tool
 from langchain.agents import AgentType
 from rag_manager import RAGManager
+from config import Config
 import tempfile
 import logging
 import warnings
@@ -41,14 +43,15 @@ plt.rcParams['axes.unicode_minus'] = False
 
 # Initialize LangChain's ChatOpenAI
 llm = ChatOpenAI(
-    model="openai/gpt-4o",
+    model=Config.get_openai_api_model(),
     temperature=0.0,
-    openai_api_key="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",
-    base_url="https://openrouter.ai/api/v1",
+    openai_api_key=Config.get_openai_api_key(),
+    base_url=Config.get_openai_api_base_url(),
     default_headers={
-        "HTTP-Referer": "https://openrouter.ai",
-        "X-Title": "DataPilot",
-        "Authorization": "Bearer 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"
+        "Authorization": f"Bearer {Config.get_openai_api_key()}",
+        "HTTP-Referer": Config.get_http_referer(),
+        "X-Title": Config.get_x_title(),
+        "Content-Type": "application/json"
     }
 )
 
@@ -571,6 +574,47 @@ Additional metrics include:
                     4. Suggests relevant analysis approaches
                     
                     Use this tool to understand specific columns before analyzing them."""
+                ),
+                Tool(
+                    name="create_visualization",
+                    func=lambda df_json, x_column, y_column=None, filter_column=None, filter_value=None, chart_type='bar', title=None, x_label=None, y_label=None, top_n=None, sort_by='count', ascending=False, include_percentages=True: create_generalized_visualization(
+                        df=df_json,
+                        x_column=x_column,
+                        y_column=y_column,
+                        filter_column=filter_column,
+                        filter_value=filter_value,
+                        chart_type=chart_type,
+                        title=title,
+                        x_label=x_label,
+                        y_label=y_label,
+                        top_n=top_n,
+                        sort_by=sort_by,
+                        ascending=ascending,
+                        include_percentages=include_percentages
+                    ),
+                    description="""Create a visualization for any dataset structure. This tool can:
+                    1. Create bar, pie, scatter, line, and histogram charts
+                    2. Filter data by any column and value
+                    3. Show top N values
+                    4. Sort by count or value
+                    5. Display percentages
+                    6. Customize labels and titles
+                    
+                    Parameters:
+                    - x_column: The column to use for x-axis (required)
+                    - y_column: Optional column for y-axis (required for scatter/line plots)
+                    - filter_column: Optional column to filter by
+                    - filter_value: Optional value to filter for
+                    - chart_type: 'bar', 'pie', 'scatter', 'line', or 'hist' (default: 'bar')
+                    - title: Optional custom chart title
+                    - x_label: Optional custom x-axis label
+                    - y_label: Optional custom y-axis label
+                    - top_n: Optional number of top values to show
+                    - sort_by: 'count' or 'value' (default: 'count')
+                    - ascending: Sort order (default: False)
+                    - include_percentages: Show percentages (default: True)
+                    
+                    Returns a dictionary with the chart path and analysis results."""
                 )
             ]
         )

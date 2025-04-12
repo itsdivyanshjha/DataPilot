@@ -26,12 +26,21 @@ class RAGManager:
         self.embeddings = None
         self.cached_embeddings = {}
         self.current_dataset_hash = None
+        self.vector_store_path = "vector_store"
         
         # Initialize sentence transformer for embeddings
         logger.info("Initializing Sentence Transformer for embeddings...")
         try:
             self.embeddings = SentenceTransformer('all-MiniLM-L6-v2')
             logger.info("Sentence Transformer initialized successfully")
+            
+            # Try to load existing vector store
+            if os.path.exists(self.vector_store_path):
+                try:
+                    self.vector_store = FAISS.load_local(self.vector_store_path, self.embeddings)
+                    logger.info("Loaded existing vector store")
+                except Exception as e:
+                    logger.warning(f"Failed to load existing vector store: {str(e)}")
         except Exception as e:
             logger.error(f"Failed to initialize Sentence Transformer: {str(e)}")
             raise
@@ -176,7 +185,11 @@ class RAGManager:
                     {},
                     normalize_L2=True
                 )
-                logger.info("Vector store created successfully")
+                
+                # Save the vector store
+                os.makedirs(self.vector_store_path, exist_ok=True)
+                self.vector_store.save_local(self.vector_store_path)
+                logger.info("Vector store created and saved successfully")
             except Exception as e:
                 logger.error(f"Error creating vector store: {str(e)}")
                 raise
@@ -238,6 +251,12 @@ class RAGManager:
             self.current_dataset_info = None
             self.current_dataset_hash = None
             self.cached_embeddings.clear()
+            
+            # Remove saved vector store
+            if os.path.exists(self.vector_store_path):
+                import shutil
+                shutil.rmtree(self.vector_store_path)
+                
             logger.info("Knowledge base cleared successfully")
         except Exception as e:
             logger.error(f"Error clearing knowledge base: {str(e)}")

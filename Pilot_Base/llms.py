@@ -32,9 +32,12 @@ try:
     chatopenai_llm = ChatOpenAI(
         model=Config.get_openai_api_model(),
         temperature=0.0,
-        openai_api_key=api_key,
+        api_key=api_key,
         base_url=Config.get_openai_api_base_url(),
-        default_headers=headers
+        default_headers={
+            "HTTP-Referer": Config.get_http_referer(),
+            "X-Title": Config.get_x_title()
+        }
     )
     logger.info("Successfully initialized ChatOpenAI with OpenRouter")
     logger.debug(f"Using base URL: {Config.get_openai_api_base_url()}")

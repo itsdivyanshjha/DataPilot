@@ -9,15 +9,48 @@ import seaborn as sns
 import json
 import time
 import logging
+from datetime import datetime, timedelta
+from tqdm import tqdm
+from functools import lru_cache
+
+# =========================
+# Config Section
+# =========================
+MAX_ROWS_THRESHOLD = 100000
+CHART_RETENTION_DAYS = 7
+CHARTS_DIR = "charts"
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] [%(funcName)s]: %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Create charts directory if it doesn't exist
-CHARTS_DIR = "charts"
 if not os.path.exists(CHARTS_DIR):
     os.makedirs(CHARTS_DIR)
+
+# Utility: Cleanup old charts
+def cleanup_old_charts():
+    """Delete chart files older than CHART_RETENTION_DAYS from the charts directory."""
+    now = time.time()
+    cutoff = now - CHART_RETENTION_DAYS * 86400
+    if not os.path.exists(CHARTS_DIR):
+        return
+    files = os.listdir(CHARTS_DIR)
+    deleted = 0
+    for file in files:
+        file_path = os.path.join(CHARTS_DIR, file)
+        try:
+            if os.path.isfile(file_path):
+                if os.path.getmtime(file_path) < cutoff:
+                    os.remove(file_path)
+                    deleted += 1
+        except Exception as e:
+            logger.warning(f"Failed to delete chart {file_path}: {e}")
+    if deleted > 0:
+        logger.info(f"Deleted {deleted} old chart(s) from {CHARTS_DIR}")
 
 def check_image_file_exists(text: str) -> Union[list, int]:
     # Function to extract all image locations
@@ -199,6 +232,7 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
+@lru_cache(maxsize=32)
 def process_hashtags(df_json, hashtag_column='hashtags'):
     """
     Process hashtags from a column that may contain comma-separated values.
@@ -287,62 +321,57 @@ def analyze_hashtags(df_json, hashtag_column='hashtags', metric_column='likes'):
     str
         A string with the analysis results and path to the generated chart
     """
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
+    cleanup_old_charts()
+    logger.info("Starting analyze_hashtags")
     # Convert JSON to DataFrame if needed
     if isinstance(df_json, str):
-        import json
         df_dict = json.loads(df_json)
         df = pd.DataFrame(df_dict)
     else:
         df = df_json
-    
+    # Data sampling for large datasets
+    if len(df) > MAX_ROWS_THRESHOLD:
+        logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
+        df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
+    logger.debug(f"Data shape after possible sampling: {df.shape}")
+    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
     # Process hashtags to get one hashtag per row
     exploded_df = process_hashtags(df, hashtag_column)
-    
     # Group by hashtag and sum the metric
     hashtag_stats = exploded_df.groupby(hashtag_column)[metric_column].sum().reset_index()
-    
     # Sort by the metric in descending order
     hashtag_stats = hashtag_stats.sort_values(by=metric_column, ascending=False)
-    
-    # Create a visualization of the top 10 hashtags
+    # Visualization
     plt.figure(figsize=(12, 8))
-    
-    # Use only top 10 for the chart
     top_hashtags = hashtag_stats.head(10)
-    
-    # Create the bar plot with proper formatting
     ax = sns.barplot(x=hashtag_column, y=metric_column, data=top_hashtags)
-    
-    # Add value labels on top of bars
-    for i, v in enumerate(top_hashtags[metric_column]):
+    # Add value labels on top of bars using tqdm for progress
+    for i, v in enumerate(tqdm(top_hashtags[metric_column], desc="Annotating bars")):
         ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
-    
-    # Format y-axis with commas
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    
     plt.title(f'Top 10 Hashtags by {metric_column.capitalize()}', fontsize=16)
     plt.xlabel('Hashtag', fontsize=14)
     plt.ylabel(f'Total {metric_column.capitalize()}', fontsize=14)
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    
-    # Save the chart
-    chart_path = f'charts/top_hashtags_by_{metric_column}.png'
+    chart_path = f'{CHARTS_DIR}/top_hashtags_by_{metric_column}.png'
     plt.savefig(chart_path)
     plt.close()
-    
     # Get the top hashtag and its metric value
     top_hashtag = hashtag_stats.iloc[0][hashtag_column]
     top_metric = hashtag_stats.iloc[0][metric_column]
-    
-    # Return a formatted string with the results
-    result = f"The hashtag with the most {metric_column} is {top_hashtag} with {format_large_number(top_metric)} {metric_column}.\n"
-    result += f"<image : r\"{chart_path}\">"
-    
+    summary = f"The hashtag with the most {metric_column} is {top_hashtag} with {format_large_number(top_metric)} {metric_column}."
+    result = {
+        "success": True,
+        "data": hashtag_stats.to_dict("records"),
+        "visualizations": [chart_path],
+        "summary": summary,
+        "metadata": {
+            "top_hashtag": top_hashtag,
+            "top_metric": top_metric
+        }
+    }
+    logger.info("analyze_hashtags completed successfully.")
     return result
 
 def find_platform_with_most_engagement(df_json, hashtag, engagement_column='likes'):
@@ -363,65 +392,67 @@ def find_platform_with_most_engagement(df_json, hashtag, engagement_column='like
     str
         A string with the analysis results and path to the generated chart
     """
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
+    cleanup_old_charts()
+    logger.info("Starting find_platform_with_most_engagement")
     # Convert JSON to DataFrame if needed
     if isinstance(df_json, str):
-        import json
         df_dict = json.loads(df_json)
         df = pd.DataFrame(df_dict)
     else:
         df = df_json
-    
+    # Data sampling for large datasets
+    if len(df) > MAX_ROWS_THRESHOLD:
+        logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
+        df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
+    logger.debug(f"Data shape after possible sampling: {df.shape}")
+    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
     # Process hashtags to get one hashtag per row
     exploded_df = process_hashtags(df, 'hashtags')
-    
     # Filter for the specific hashtag
     hashtag_df = exploded_df[exploded_df['hashtags'] == hashtag]
-    
     # Group by platform and sum the engagement
     platform_stats = hashtag_df.groupby('platform')[engagement_column].sum().reset_index()
-    
     # Sort by engagement in descending order
     platform_stats = platform_stats.sort_values(by=engagement_column, ascending=False)
-    
-    # Create a visualization
+    # Visualization
     plt.figure(figsize=(10, 6))
-    
-    # Create the bar plot with proper formatting
     ax = sns.barplot(x='platform', y=engagement_column, data=platform_stats)
-    
-    # Add value labels on top of bars
-    for i, v in enumerate(platform_stats[engagement_column]):
+    for i, v in enumerate(tqdm(platform_stats[engagement_column], desc="Annotating bars")):
         ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
-    
-    # Format y-axis with commas
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    
     plt.title(f'Engagement ({engagement_column}) for #{hashtag} by Platform', fontsize=16)
     plt.xlabel('Platform', fontsize=14)
     plt.ylabel(f'Total {engagement_column.capitalize()}', fontsize=14)
     plt.tight_layout()
-    
-    # Save the chart
-    chart_path = f'charts/hashtag_{hashtag}_by_platform.png'
+    chart_path = f'{CHARTS_DIR}/hashtag_{hashtag}_by_platform.png'
     plt.savefig(chart_path)
     plt.close()
-    
-    # Get the platform with the most engagement
     if not platform_stats.empty:
         top_platform = platform_stats.iloc[0]['platform']
         top_engagement = platform_stats.iloc[0][engagement_column]
-        
-        # Return a formatted string with the results
-        result = f"The platform with the most engagement for #{hashtag} is {top_platform} with {format_large_number(top_engagement)} {engagement_column}.\n"
-        result += f"<image : r\"{chart_path}\">"
-        
+        summary = f"The platform with the most engagement for #{hashtag} is {top_platform} with {format_large_number(top_engagement)} {engagement_column}."
+        result = {
+            "success": True,
+            "data": platform_stats.to_dict("records"),
+            "visualizations": [chart_path],
+            "summary": summary,
+            "metadata": {
+                "top_platform": top_platform,
+                "top_engagement": top_engagement,
+                "hashtag": hashtag
+            }
+        }
+        logger.info("find_platform_with_most_engagement completed successfully.")
         return result
     else:
-        return f"No data found for hashtag #{hashtag}."
+        logger.warning(f"No data found for hashtag #{hashtag}.")
+        return {
+            "success": False,
+            "data": [],
+            "visualizations": [],
+            "summary": f"No data found for hashtag #{hashtag}.",
+            "metadata": {"hashtag": hashtag}
+        }
 
 def find_hashtag_with_most_likes_and_platform(df_json):
     """
@@ -437,100 +468,81 @@ def find_hashtag_with_most_likes_and_platform(df_json):
     str
         A string with the analysis results and paths to the generated charts
     """
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
+    cleanup_old_charts()
+    logger.info("Starting find_hashtag_with_most_likes_and_platform")
     # Convert JSON to DataFrame if needed
     if isinstance(df_json, str):
-        import json
         df_dict = json.loads(df_json)
         df = pd.DataFrame(df_dict)
     else:
         df = df_json
-    
+    # Data sampling for large datasets
+    if len(df) > MAX_ROWS_THRESHOLD:
+        logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
+        df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
+    logger.debug(f"Data shape after possible sampling: {df.shape}")
+    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
     # Process hashtags to get one hashtag per row
     exploded_df = process_hashtags(df, 'hashtags')
-    
     # Group by hashtag and sum the likes
     hashtag_stats = exploded_df.groupby('hashtags')['likes'].sum().reset_index()
-    
-    # Sort by likes in descending order
     hashtag_stats = hashtag_stats.sort_values(by='likes', ascending=False)
-    
-    # Get the top hashtag and its likes
     top_hashtag = hashtag_stats.iloc[0]['hashtags']
     top_likes = hashtag_stats.iloc[0]['likes']
-    
-    # Create a visualization of the top 10 hashtags by likes
+    # Visualization: top hashtags
     plt.figure(figsize=(12, 8))
-    
-    # Use only top 10 for the chart
     top_hashtags = hashtag_stats.head(10)
-    
-    # Create the bar plot with proper formatting
     ax = sns.barplot(x='hashtags', y='likes', data=top_hashtags)
-    
-    # Add value labels on top of bars
-    for i, v in enumerate(top_hashtags['likes']):
+    for i, v in enumerate(tqdm(top_hashtags['likes'], desc="Annotating hashtag bars")):
         ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
-    
-    # Format y-axis with commas
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    
     plt.title('Top 10 Hashtags by Likes', fontsize=16)
     plt.xlabel('Hashtag', fontsize=14)
     plt.ylabel('Total Likes', fontsize=14)
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    
-    # Save the chart
-    hashtags_chart_path = 'charts/top_hashtags_by_likes.png'
+    hashtags_chart_path = f'{CHARTS_DIR}/top_hashtags_by_likes.png'
     plt.savefig(hashtags_chart_path)
     plt.close()
-    
-    # Filter for posts with the top hashtag
+    # Platform stats for top hashtag
     top_hashtag_df = exploded_df[exploded_df['hashtags'] == top_hashtag]
-    
-    # Group by platform and sum the likes
     platform_stats = top_hashtag_df.groupby('platform')['likes'].sum().reset_index()
-    
-    # Sort by likes in descending order
     platform_stats = platform_stats.sort_values(by='likes', ascending=False)
-    
-    # Get the top platform and its likes for this hashtag
     top_platform = platform_stats.iloc[0]['platform']
     platform_likes = platform_stats.iloc[0]['likes']
-    
-    # Create a visualization of the platforms for this hashtag
+    # Visualization: platforms for top hashtag
     plt.figure(figsize=(10, 6))
-    
-    # Create the bar plot with proper formatting
     ax = sns.barplot(x='platform', y='likes', data=platform_stats)
-    
-    # Add value labels on top of bars
-    for i, v in enumerate(platform_stats['likes']):
+    for i, v in enumerate(tqdm(platform_stats['likes'], desc="Annotating platform bars")):
         ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
-    
-    # Format y-axis with commas
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    
     plt.title(f'Likes for #{top_hashtag} by Platform', fontsize=16)
     plt.xlabel('Platform', fontsize=14)
     plt.ylabel('Total Likes', fontsize=14)
     plt.tight_layout()
-    
-    # Save the chart
-    platform_chart_path = f'charts/hashtag_{top_hashtag}_by_platform.png'
+    platform_chart_path = f'{CHARTS_DIR}/hashtag_{top_hashtag}_by_platform.png'
     plt.savefig(platform_chart_path)
     plt.close()
-    
-    # Return a formatted string with the results
-    result = f"The hashtag with the most likes is #{top_hashtag} with {format_large_number(top_likes)} likes.\n"
-    result += f"This hashtag appears most on {top_platform} with {format_large_number(platform_likes)} likes on that platform.\n\n"
-    result += f"<image : r\"{hashtags_chart_path}\">\n"
-    result += f"<image : r\"{platform_chart_path}\">"
-    
+    summary = (
+        f"The hashtag with the most likes is #{top_hashtag} with {format_large_number(top_likes)} likes. "
+        f"This hashtag appears most on {top_platform} with {format_large_number(platform_likes)} likes on that platform."
+    )
+    result = {
+        "success": True,
+        "data": {
+            "hashtag_stats": hashtag_stats.to_dict("records"),
+            "platform_stats": platform_stats.to_dict("records"),
+        },
+        "visualizations": [hashtags_chart_path, platform_chart_path],
+        "summary": summary,
+        "metadata": {
+            "top_hashtag": top_hashtag,
+            "top_likes": top_likes,
+            "top_platform": top_platform,
+            "platform_likes": platform_likes
+        }
+    }
+    logger.info("find_hashtag_with_most_likes_and_platform completed successfully.")
     return result
 
 def analyze_negative_posts_by_platform(df_json):
@@ -547,58 +559,51 @@ def analyze_negative_posts_by_platform(df_json):
     str
         A string with the analysis results and path to the generated chart
     """
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    
+    cleanup_old_charts()
+    logger.info("Starting analyze_negative_posts_by_platform")
     # Convert JSON to DataFrame if needed
     if isinstance(df_json, str):
-        import json
         df_dict = json.loads(df_json)
         df = pd.DataFrame(df_dict)
     else:
         df = df_json
-    
+    # Data sampling for large datasets
+    if len(df) > MAX_ROWS_THRESHOLD:
+        logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
+        df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
+    logger.debug(f"Data shape after possible sampling: {df.shape}")
+    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
     # Group by platform and count negative posts
     platform_stats = df[df['sentiment'] == 'negative'].groupby('platform').size().reset_index(name='negative_posts')
-    
-    # Sort by number of negative posts in descending order
     platform_stats = platform_stats.sort_values(by='negative_posts', ascending=False)
-    
-    # Create visualization
+    # Visualization
     plt.figure(figsize=(10, 6))
-    
-    # Create the bar plot with proper formatting
     ax = sns.barplot(x='platform', y='negative_posts', data=platform_stats)
-    
-    # Add value labels on top of bars
-    for i, v in enumerate(platform_stats['negative_posts']):
+    for i, v in enumerate(tqdm(platform_stats['negative_posts'], desc="Annotating bars")):
         ax.text(i, v + 1, format_large_number(v), ha='center')
-    
     plt.title('Negative Posts by Platform', fontsize=16)
     plt.xlabel('Platform', fontsize=14)
     plt.ylabel('Number of Negative Posts', fontsize=14)
     plt.tight_layout()
-    
-    # Save the chart
-    chart_path = 'charts/negative_posts_by_platform.png'
+    chart_path = f'{CHARTS_DIR}/negative_posts_by_platform.png'
     plt.savefig(chart_path)
     plt.close()
-    
-    # Get the platform with the most negative posts
     top_platform = platform_stats.iloc[0]['platform']
     top_count = platform_stats.iloc[0]['negative_posts']
-    
-    # Get counts for other platforms for comparison
     platform_counts = {row['platform']: row['negative_posts'] for _, row in platform_stats.iterrows()}
-    
-    # Create a detailed response
-    result = f"{top_platform} has the highest number of negative posts with {format_large_number(top_count)} posts.\n"
-    result += "Here's the breakdown by platform:\n"
-    for platform, count in platform_counts.items():
-        result += f"- {platform}: {format_large_number(count)} negative posts\n"
-    result += f"\n<image : r\"{chart_path}\">"
-    
+    summary = f"{top_platform} has the highest number of negative posts with {format_large_number(top_count)} posts."
+    result = {
+        "success": True,
+        "data": platform_stats.to_dict("records"),
+        "visualizations": [chart_path],
+        "summary": summary,
+        "metadata": {
+            "platform_counts": platform_counts,
+            "top_platform": top_platform,
+            "top_count": top_count
+        }
+    }
+    logger.info("analyze_negative_posts_by_platform completed successfully.")
     return result
 
 def analyze_categorical_counts(

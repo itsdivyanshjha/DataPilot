@@ -67,7 +67,7 @@ class Config:
     @staticmethod
     def get_openai_api_model() -> str:
         """Get OpenRouter API model"""
-        model = os.getenv("OPENAI_API_MODEL", "openai/gpt-4o")
+        model = os.getenv("OPENAI_API_MODEL", "openai/gpt-4")
         logger.debug(f"Using model: {model}")
         return model.strip()
 

@@ -8,6 +8,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import json
 import time
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Create charts directory if it doesn't exist
 CHARTS_DIR = "charts"
@@ -60,7 +65,7 @@ def read_image_file(image_path: str) -> Union[bytes, None]:
         with open(image_path, "rb") as image_file:
             return image_file.read()
     except Exception as e:
-        print(f"Error reading image file: {e}")
+        logger.error(f"Error reading image file: {e}")
         return None
 
 def generate_dataset_overview(df: pd.DataFrame) -> Dict[str, Any]:
@@ -1081,3 +1086,209 @@ def create_generalized_visualization(
     except Exception as e:
         logger.error(f"Error in create_generalized_visualization: {str(e)}")
         raise ValueError(f"Error creating visualization: {str(e)}")
+
+def analyze_distribution(
+    df: Union[pd.DataFrame, str],
+    column: str,
+    group_by: str = None,
+    bins: int = 30,
+    top_n: int = None,
+    include_stats: bool = True,
+    chart_type: str = 'auto',
+    title: str = None,
+    x_label: str = None,
+    y_label: str = None
+) -> Dict[str, Any]:
+    """
+    Analyze the distribution of any column in the dataset with advanced options.
+    """
+    try:
+        # Convert JSON to DataFrame if needed
+        if isinstance(df, str):
+            df = pd.DataFrame(json.loads(df))
+        
+        # Validate column exists
+        if column not in df.columns:
+            raise ValueError(f"Column '{column}' not found in dataset")
+        
+        # Create figure
+        plt.figure(figsize=(12, 6))
+        
+        # Initialize results dictionary
+        results = {
+            'column': column,
+            'total_records': len(df),
+            'null_count': df[column].isnull().sum(),
+            'null_percentage': (df[column].isnull().sum() / len(df) * 100).round(2)
+        }
+        
+        # Handle numerical data
+        if pd.api.types.is_numeric_dtype(df[column]):
+            results['data_type'] = 'numerical'
+            
+            # Calculate statistics
+            stats = {
+                'mean': df[column].mean(),
+                'median': df[column].median(),
+                'std': df[column].std(),
+                'min': df[column].min(),
+                'max': df[column].max(),
+                'q1': df[column].quantile(0.25),
+                'q3': df[column].quantile(0.75)
+            }
+            results['statistics'] = stats
+            
+            # Format statistics for display
+            stats_text = (
+                f"Summary Statistics:\n"
+                f"Mean: {format_large_number(stats['mean'])}\n"
+                f"Median: {format_large_number(stats['median'])}\n"
+                f"Std Dev: {format_large_number(stats['std'])}\n"
+                f"Min: {format_large_number(stats['min'])}\n"
+                f"Max: {format_large_number(stats['max'])}\n"
+                f"25th percentile: {format_large_number(stats['q1'])}\n"
+                f"75th percentile: {format_large_number(stats['q3'])}"
+            )
+            results['formatted_stats'] = stats_text
+            
+            if chart_type == 'auto' or chart_type == 'hist':
+                # Create histogram with KDE
+                sns.histplot(data=df, x=column, bins=bins, kde=True)
+                if include_stats:
+                    # Add statistical annotations
+                    plt.text(0.95, 0.95, stats_text,
+                            transform=plt.gca().transAxes,
+                            verticalalignment='top',
+                            horizontalalignment='right',
+                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            elif chart_type == 'box':
+                sns.boxplot(data=df, y=column)
+            elif chart_type == 'violin':
+                sns.violinplot(data=df, y=column)
+            
+            if group_by and group_by in df.columns:
+                plt.figure(figsize=(12, 6))
+                if chart_type == 'box':
+                    sns.boxplot(data=df, x=group_by, y=column)
+                else:
+                    sns.violinplot(data=df, x=group_by, y=column)
+                plt.xticks(rotation=45, ha='right')
+                
+                # Calculate and format group statistics
+                group_stats = df.groupby(group_by)[column].agg([
+                    'mean', 'median', 'std', 'min', 'max'
+                ]).round(2)
+                
+                # Format group statistics for display
+                group_stats_text = "Group Statistics:\n"
+                for group in group_stats.index:
+                    group_stats_text += f"\n{group}:\n"
+                    group_stats_text += f"  Mean: {format_large_number(group_stats.loc[group, 'mean'])}\n"
+                    group_stats_text += f"  Median: {format_large_number(group_stats.loc[group, 'median'])}\n"
+                    group_stats_text += f"  Min: {format_large_number(group_stats.loc[group, 'min'])}\n"
+                    group_stats_text += f"  Max: {format_large_number(group_stats.loc[group, 'max'])}\n"
+                
+                results['group_statistics'] = group_stats.to_dict()
+                results['formatted_group_stats'] = group_stats_text
+        
+        # Handle categorical data
+        else:
+            results['data_type'] = 'categorical'
+            value_counts = df[column].value_counts()
+            total_count = len(df)
+            
+            if top_n:
+                value_counts = value_counts.head(top_n)
+            
+            # Calculate and format statistics
+            stats = {
+                'unique_values': df[column].nunique(),
+                'most_common': value_counts.index[0],
+                'most_common_count': int(value_counts.iloc[0]),
+                'most_common_percentage': (value_counts.iloc[0] / total_count * 100).round(2)
+            }
+            results['statistics'] = stats
+            
+            # Format statistics for display
+            stats_text = (
+                f"Category Statistics:\n"
+                f"Total unique values: {stats['unique_values']}\n"
+                f"Most common: {stats['most_common']}\n"
+                f"Occurrences: {format_large_number(stats['most_common_count'])} "
+                f"({stats['most_common_percentage']}%)"
+            )
+            results['formatted_stats'] = stats_text
+            
+            if chart_type == 'auto' or chart_type == 'bar':
+                # Create bar plot
+                sns.barplot(x=value_counts.index, y=value_counts.values)
+                plt.xticks(rotation=45, ha='right')
+                
+                # Add value labels on bars
+                for i, v in enumerate(value_counts.values):
+                    percentage = (v / total_count * 100).round(1)
+                    plt.text(i, v, f'{format_large_number(v)}\n({percentage}%)', 
+                            ha='center', va='bottom')
+            
+            if group_by and group_by in df.columns:
+                # Calculate cross-tabulation with percentages
+                crosstab = pd.crosstab(
+                    df[group_by], df[column], normalize='index'
+                ).round(2)
+                results['group_statistics'] = crosstab.to_dict()
+                
+                # Format cross-tabulation for display
+                group_stats_text = "Distribution by Group:\n"
+                for group in crosstab.index:
+                    group_stats_text += f"\n{group}:\n"
+                    for category in crosstab.columns:
+                        percentage = crosstab.loc[group, category] * 100
+                        if percentage > 0:
+                            group_stats_text += f"  {category}: {percentage:.1f}%\n"
+                
+                results['formatted_group_stats'] = group_stats_text
+        
+        # Set labels and title
+        plt.xlabel(x_label or column)
+        plt.ylabel(y_label or ('Count' if chart_type != 'box' else 'Value'))
+        plt.title(title or f'Distribution of {column}')
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        # Save the chart
+        timestamp = int(time.time())
+        chart_path = f"charts/distribution_{column}_{timestamp}.png"
+        plt.savefig(chart_path)
+        plt.close()
+        
+        results['chart_path'] = chart_path
+        
+        # Add a natural language summary
+        if results['data_type'] == 'numerical':
+            summary = (
+                f"The {column} distribution shows:\n"
+                f"- Average (mean) of {format_large_number(stats['mean'])}\n"
+                f"- Median of {format_large_number(stats['median'])}\n"
+                f"- Range from {format_large_number(stats['min'])} to {format_large_number(stats['max'])}\n"
+                f"- Standard deviation of {format_large_number(stats['std'])}"
+            )
+        else:
+            summary = (
+                f"The {column} distribution shows:\n"
+                f"- {stats['unique_values']} unique values\n"
+                f"- Most common: {stats['most_common']} "
+                f"({stats['most_common_percentage']}% of total)\n"
+                f"- Top {len(value_counts)} categories shown in the chart"
+            )
+        
+        if group_by:
+            summary += f"\n\nThe distribution is broken down by {group_by} in the visualization."
+        
+        results['summary'] = summary
+        
+        return results
+    
+    except Exception as e:
+        logger.error(f"Error in analyze_distribution: {str(e)}")
+        raise ValueError(f"Error analyzing distribution: {str(e)}")

@@ -16,7 +16,8 @@ from utils import (
     format_large_number,
     analyze_categorical_counts,
     analyze_data,
-    create_generalized_visualization
+    create_generalized_visualization,
+    analyze_distribution
 )
 from chains import summarization_chain
 from prompts import get_prefix
@@ -28,9 +29,10 @@ import tempfile
 import logging
 import warnings
 import matplotlib.font_manager as fm
+import time
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Suppress specific warnings
@@ -41,19 +43,38 @@ warnings.filterwarnings('ignore', category=UserWarning, module='langchain_experi
 plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['axes.unicode_minus'] = False
 
-# Initialize LangChain's ChatOpenAI
-llm = ChatOpenAI(
-    model=Config.get_openai_api_model(),
-    temperature=0.0,
-    openai_api_key=Config.get_openai_api_key(),
-    base_url=Config.get_openai_api_base_url(),
-    default_headers={
-        "Authorization": f"Bearer {Config.get_openai_api_key()}",
-        "HTTP-Referer": Config.get_http_referer(),
-        "X-Title": Config.get_x_title(),
-        "Content-Type": "application/json"
-    }
-)
+def initialize_llm():
+    """Initialize the LLM with proper configuration"""
+    try:
+        api_key = Config.get_openai_api_key()
+        logger.debug(f"Initializing LLM with API key starting with: {api_key[:10] if api_key else 'None'}")
+        
+        if not api_key or api_key.strip() == "":
+            raise ValueError("API key is empty")
+            
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": Config.get_http_referer(),
+            "X-Title": Config.get_x_title(),
+            "Content-Type": "application/json"
+        }
+        
+        logger.debug(f"Using headers: {headers}")
+        logger.debug(f"Using base URL: {Config.get_openai_api_base_url()}")
+        logger.debug(f"Using model: {Config.get_openai_api_model()}")
+        
+        return ChatOpenAI(
+            model=Config.get_openai_api_model(),
+            temperature=0.0,
+            openai_api_key=api_key,
+            base_url=Config.get_openai_api_base_url(),
+            default_headers=headers
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize ChatOpenAI: {str(e)}")
+        logger.error(f"Current working directory: {os.getcwd()}")
+        logger.error(f"Environment variables: {dict(os.environ)}")
+        raise
 
 # Initialize RAG Manager with OpenAI embeddings
 rag_manager = RAGManager()
@@ -460,9 +481,13 @@ Additional metrics include:
             st.subheader("Data Quality Report", divider="rainbow")
             st.write("This feature is not implemented in the current version.")
 
-        # Initialize the agent executor with the pandas agent and RAG context
+        # Optimize LLM initialization by storing the instance in session state
+        if 'llm' not in st.session_state:
+            st.session_state.llm = initialize_llm()
+
+        # Use the LLM instance from session state
         agent_executor = create_pandas_dataframe_agent(
-            llm,
+            st.session_state.llm,
             df,
             agent_type="openai-tools",
             prefix=get_prefix(
@@ -479,14 +504,40 @@ Additional metrics include:
             allow_dangerous_code=True,
             extra_tools=[
                 Tool(
+                    name="analyze_distribution",
+                    func=lambda params: {
+                        'output': (
+                            f"The distribution of {params.get('column')} in the dataset is as follows:\n\n" +
+                            str(analyze_distribution(
+                                df=st.session_state.df,
+                                **params
+                            )) +
+                            f"\n\n<image : r\"charts/distribution_{params.get('column')}_{int(time.time())}.png\">"
+                        )
+                    },
+                    description="""Analyze and visualize the distribution of any column in the dataset.
+                    IMPORTANT: Always include the chart visualization in your response using the exact format:
+                    <image : r"charts/..."> 
+                    
+                    Parameters:
+                    - column: The column to analyze (required)
+                    - group_by: Optional column to group by
+                    - bins: Number of bins for numerical data
+                    - chart_type: Type of visualization
+                    
+                    Example response format:
+                    "Analysis results... <image : r"charts/distribution_column_timestamp.png">"
+                    """
+                ),
+                Tool(
                     name="format_large_number",
                     func=format_large_number,
                     description="Format large numbers with commas for better readability. Example: 1000000 -> 1,000,000"
                 ),
                 Tool(
                     name="analyze_categorical_counts",
-                    func=lambda df_json, category_column, count_column=None, value_to_count=None, title=None, top_n=None, sort_by='count', ascending=False, include_percentages=True, chart_type='bar': analyze_categorical_counts(
-                        df_json=df_json,
+                    func=lambda category_column, count_column=None, value_to_count=None, title=None, top_n=None, sort_by='count', ascending=False, include_percentages=True, chart_type='bar': analyze_categorical_counts(
+                        df_json=st.session_state.df.to_json(),  # Ensure DataFrame is passed correctly
                         category_column=category_column,
                         count_column=count_column,
                         value_to_count=value_to_count,
@@ -657,26 +708,32 @@ Additional metrics include:
                 
                 # Process the response and check for multiple images
                 response_text = res['output']
-                image_tokens = re.findall(r'<image : r"(charts/[^"]+)">', response_text)
+                image_paths = re.findall(r'<image : r"(charts/[^"]+)">', response_text)
                 
-                # Format the response text
-                formatted_response = res['output']
+                # Clean up the response text to remove the raw image tags
+                clean_response = re.sub(r'<image : r"charts/[^"]+">', '', response_text)
                 
-                # Add images to the session state if they exist
-                if image_tokens:
-                    for img_path in image_tokens:
-                        if os.path.isfile(img_path):
-                            st.session_state.img_list.append(img_path)
+                # Update the message with the clean text
+                message_placeholder.markdown(clean_response)
+                
+                # Display images if found
+                if image_paths:
+                    for img_path in image_paths:
+                        if os.path.exists(img_path):
+                            st.image(img_path)
+                            # Add images to session state for the right column
+                            if img_path not in st.session_state.img_list:
+                                st.session_state.img_list.append(img_path)
                         else:
-                            # If image doesn't exist, add a note to the response
-                            formatted_response += f"\n\nNote: Could not find image at {img_path}."
+                            st.warning(f"Generated chart not found at {img_path}")
                 
-                st.session_state.chat_history.append({"role": "assistant", "content": formatted_response})
+                st.session_state.chat_history.append({"role": "assistant", "content": response_text})
                 
                 # Display chat messages after new input
                 st.rerun()
             except Exception as e:
-                error_message = f"Error processing your query: {str(e)}\n\nPlease try rephrasing your question or ask something else."
+                error_message = f"Error processing your query: {str(e)}"
+                message_placeholder.markdown(error_message)
                 st.session_state.chat_history.append({"role": "assistant", "content": error_message})
                 st.rerun()
 

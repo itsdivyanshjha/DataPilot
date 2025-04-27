@@ -303,307 +303,282 @@ def format_large_number(number: Union[int, float]) -> str:
     except (ValueError, TypeError):
         return str(number)
 
-def analyze_hashtags(df_json, hashtag_column='hashtags', metric_column='likes'):
-    """
-    Analyze hashtags to find the most popular ones based on a metric.
-    
-    Parameters:
-    -----------
-    df_json : str or pandas.DataFrame
-        The dataframe containing the hashtag and metric columns, or a JSON string representation
-    hashtag_column : str
-        The name of the column containing hashtags
-    metric_column : str
-        The name of the column containing the metric to analyze (e.g., likes)
-        
-    Returns:
-    --------
-    str
-        A string with the analysis results and path to the generated chart
-    """
-    cleanup_old_charts()
-    logger.info("Starting analyze_hashtags")
-    # Convert JSON to DataFrame if needed
-    if isinstance(df_json, str):
-        df_dict = json.loads(df_json)
-        df = pd.DataFrame(df_dict)
-    else:
-        df = df_json
-    # Data sampling for large datasets
-    if len(df) > MAX_ROWS_THRESHOLD:
-        logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
-        df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
-    logger.debug(f"Data shape after possible sampling: {df.shape}")
-    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
-    # Process hashtags to get one hashtag per row
-    exploded_df = process_hashtags(df, hashtag_column)
-    # Group by hashtag and sum the metric
-    hashtag_stats = exploded_df.groupby(hashtag_column)[metric_column].sum().reset_index()
-    # Sort by the metric in descending order
-    hashtag_stats = hashtag_stats.sort_values(by=metric_column, ascending=False)
-    # Visualization
-    plt.figure(figsize=(12, 8))
-    top_hashtags = hashtag_stats.head(10)
-    ax = sns.barplot(x=hashtag_column, y=metric_column, data=top_hashtags)
-    # Add value labels on top of bars using tqdm for progress
-    for i, v in enumerate(tqdm(top_hashtags[metric_column], desc="Annotating bars")):
-        ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    plt.title(f'Top 10 Hashtags by {metric_column.capitalize()}', fontsize=16)
-    plt.xlabel('Hashtag', fontsize=14)
-    plt.ylabel(f'Total {metric_column.capitalize()}', fontsize=14)
-    plt.xticks(rotation=45, ha='right')
-    plt.tight_layout()
-    chart_path = f'{CHARTS_DIR}/top_hashtags_by_{metric_column}.png'
-    plt.savefig(chart_path)
-    plt.close()
-    # Get the top hashtag and its metric value
-    top_hashtag = hashtag_stats.iloc[0][hashtag_column]
-    top_metric = hashtag_stats.iloc[0][metric_column]
-    summary = f"The hashtag with the most {metric_column} is {top_hashtag} with {format_large_number(top_metric)} {metric_column}."
-    result = {
-        "success": True,
-        "data": hashtag_stats.to_dict("records"),
-        "visualizations": [chart_path],
-        "summary": summary,
-        "metadata": {
-            "top_hashtag": top_hashtag,
-            "top_metric": top_metric
-        }
-    }
-    logger.info("analyze_hashtags completed successfully.")
-    return result
 
-def find_platform_with_most_engagement(df_json, hashtag, engagement_column='likes'):
+def analyze_top_categories_by_metric(
+    df: pd.DataFrame,
+    category_column: str,
+    metric_column: str,
+    top_n: int = 10
+) -> Dict[str, Any]:
     """
-    Find which platform has the most engagement for a specific hashtag.
-    
-    Parameters:
-    -----------
-    df_json : str or pandas.DataFrame
-        The dataframe containing the data, or a JSON string representation
-    hashtag : str
-        The hashtag to analyze
-    engagement_column : str
-        The column to use for measuring engagement (e.g., likes)
-        
-    Returns:
-    --------
-    str
-        A string with the analysis results and path to the generated chart
+    Generalized analysis logic for any category and metric columns.
+    Returns the top N categories by the specified metric.
     """
     cleanup_old_charts()
-    logger.info("Starting find_platform_with_most_engagement")
-    # Convert JSON to DataFrame if needed
-    if isinstance(df_json, str):
-        df_dict = json.loads(df_json)
-        df = pd.DataFrame(df_dict)
-    else:
-        df = df_json
+    logger.info("Starting analyze_top_categories_by_metric")
     # Data sampling for large datasets
     if len(df) > MAX_ROWS_THRESHOLD:
         logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
         df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
-    logger.debug(f"Data shape after possible sampling: {df.shape}")
-    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
-    # Process hashtags to get one hashtag per row
-    exploded_df = process_hashtags(df, 'hashtags')
-    # Filter for the specific hashtag
-    hashtag_df = exploded_df[exploded_df['hashtags'] == hashtag]
-    # Group by platform and sum the engagement
-    platform_stats = hashtag_df.groupby('platform')[engagement_column].sum().reset_index()
-    # Sort by engagement in descending order
-    platform_stats = platform_stats.sort_values(by=engagement_column, ascending=False)
-    # Visualization
-    plt.figure(figsize=(10, 6))
-    ax = sns.barplot(x='platform', y=engagement_column, data=platform_stats)
-    for i, v in enumerate(tqdm(platform_stats[engagement_column], desc="Annotating bars")):
-        ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    plt.title(f'Engagement ({engagement_column}) for #{hashtag} by Platform', fontsize=16)
-    plt.xlabel('Platform', fontsize=14)
-    plt.ylabel(f'Total {engagement_column.capitalize()}', fontsize=14)
-    plt.tight_layout()
-    chart_path = f'{CHARTS_DIR}/hashtag_{hashtag}_by_platform.png'
-    plt.savefig(chart_path)
-    plt.close()
-    if not platform_stats.empty:
-        top_platform = platform_stats.iloc[0]['platform']
-        top_engagement = platform_stats.iloc[0][engagement_column]
-        summary = f"The platform with the most engagement for #{hashtag} is {top_platform} with {format_large_number(top_engagement)} {engagement_column}."
-        result = {
-            "success": True,
-            "data": platform_stats.to_dict("records"),
-            "visualizations": [chart_path],
-            "summary": summary,
-            "metadata": {
-                "top_platform": top_platform,
-                "top_engagement": top_engagement,
-                "hashtag": hashtag
-            }
-        }
-        logger.info("find_platform_with_most_engagement completed successfully.")
-        return result
-    else:
-        logger.warning(f"No data found for hashtag #{hashtag}.")
+    if category_column not in df.columns or metric_column not in df.columns:
+        logger.error(f"Column(s) '{category_column}' or '{metric_column}' not found in dataset.")
         return {
             "success": False,
             "data": [],
             "visualizations": [],
-            "summary": f"No data found for hashtag #{hashtag}.",
-            "metadata": {"hashtag": hashtag}
+            "summary": f"Column(s) '{category_column}' or '{metric_column}' not found in dataset.",
+            "metadata": {}
         }
+    stats = df.groupby(category_column)[metric_column].sum().reset_index()
+    stats = stats.sort_values(by=metric_column, ascending=False)
+    top_stats = stats.head(top_n)
+    # Visualization
+    plt.figure(figsize=(12, 8))
+    ax = sns.barplot(x=category_column, y=metric_column, data=top_stats)
+    for i, v in enumerate(top_stats[metric_column]):
+        ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
+    plt.title(f'Top {top_n} {category_column} by {metric_column}', fontsize=16)
+    plt.xlabel(category_column, fontsize=14)
+    plt.ylabel(f'Total {metric_column}', fontsize=14)
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    chart_path = f'{CHARTS_DIR}/top_{category_column}_by_{metric_column}.png'
+    plt.savefig(chart_path)
+    plt.close()
+    if not stats.empty:
+        top_category = stats.iloc[0][category_column]
+        top_metric = stats.iloc[0][metric_column]
+        summary = f"The {category_column} with the most {metric_column} is {top_category} with {format_large_number(top_metric)} {metric_column}."
+    else:
+        top_category, top_metric, summary = None, None, f"No data found for {category_column} and {metric_column}."
+    result = {
+        "success": True,
+        "data": stats.to_dict("records"),
+        "visualizations": [chart_path],
+        "summary": summary,
+        "metadata": {
+            "top_category": top_category,
+            "top_metric": top_metric
+        }
+    }
+    logger.info("analyze_top_categories_by_metric completed successfully.")
+    return result
 
-def find_hashtag_with_most_likes_and_platform(df_json):
+
+def analyze_metric_distribution_by_group(
+    df: pd.DataFrame,
+    group_column: str,
+    filter_column: str,
+    filter_value: Any,
+    metric_column: str
+) -> Dict[str, Any]:
     """
-    Find which hashtag has the most likes and on which platform it appears.
-    
-    Parameters:
-    -----------
-    df_json : str or pandas.DataFrame
-        The dataframe containing the data, or a JSON string representation
-        
-    Returns:
-    --------
-    str
-        A string with the analysis results and paths to the generated charts
+    Generalized group-wise metric distribution.
+    Returns the metric aggregated by group_column, filtered by filter_column == filter_value.
     """
     cleanup_old_charts()
-    logger.info("Starting find_hashtag_with_most_likes_and_platform")
-    # Convert JSON to DataFrame if needed
-    if isinstance(df_json, str):
-        df_dict = json.loads(df_json)
-        df = pd.DataFrame(df_dict)
-    else:
-        df = df_json
+    logger.info("Starting analyze_metric_distribution_by_group")
     # Data sampling for large datasets
     if len(df) > MAX_ROWS_THRESHOLD:
         logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
         df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
-    logger.debug(f"Data shape after possible sampling: {df.shape}")
-    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
-    # Process hashtags to get one hashtag per row
-    exploded_df = process_hashtags(df, 'hashtags')
-    # Group by hashtag and sum the likes
-    hashtag_stats = exploded_df.groupby('hashtags')['likes'].sum().reset_index()
-    hashtag_stats = hashtag_stats.sort_values(by='likes', ascending=False)
-    top_hashtag = hashtag_stats.iloc[0]['hashtags']
-    top_likes = hashtag_stats.iloc[0]['likes']
-    # Visualization: top hashtags
-    plt.figure(figsize=(12, 8))
-    top_hashtags = hashtag_stats.head(10)
-    ax = sns.barplot(x='hashtags', y='likes', data=top_hashtags)
-    for i, v in enumerate(tqdm(top_hashtags['likes'], desc="Annotating hashtag bars")):
+    if group_column not in df.columns or filter_column not in df.columns or metric_column not in df.columns:
+        logger.error(f"Column(s) '{group_column}', '{filter_column}', or '{metric_column}' not found in dataset.")
+        return {
+            "success": False,
+            "data": [],
+            "visualizations": [],
+            "summary": f"Column(s) '{group_column}', '{filter_column}', or '{metric_column}' not found in dataset.",
+            "metadata": {}
+        }
+    filtered_df = df[df[filter_column] == filter_value]
+    group_stats = filtered_df.groupby(group_column)[metric_column].sum().reset_index()
+    group_stats = group_stats.sort_values(by=metric_column, ascending=False)
+    # Visualization
+    plt.figure(figsize=(10, 6))
+    ax = sns.barplot(x=group_column, y=metric_column, data=group_stats)
+    for i, v in enumerate(group_stats[metric_column]):
         ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    plt.title('Top 10 Hashtags by Likes', fontsize=16)
-    plt.xlabel('Hashtag', fontsize=14)
-    plt.ylabel('Total Likes', fontsize=14)
+    plt.title(f'{metric_column} for {filter_column}={filter_value} by {group_column}', fontsize=16)
+    plt.xlabel(group_column, fontsize=14)
+    plt.ylabel(f'Total {metric_column}', fontsize=14)
+    plt.tight_layout()
+    chart_path = f'{CHARTS_DIR}/metric_{metric_column}_for_{filter_column}_{filter_value}_by_{group_column}.png'
+    plt.savefig(chart_path)
+    plt.close()
+    if not group_stats.empty:
+        top_group = group_stats.iloc[0][group_column]
+        top_metric = group_stats.iloc[0][metric_column]
+        summary = (
+            f"The {group_column} with the most {metric_column} for {filter_column}={filter_value} is {top_group} with {format_large_number(top_metric)} {metric_column}."
+        )
+    else:
+        top_group, top_metric, summary = None, None, f"No data found for filter {filter_column}={filter_value}."
+    result = {
+        "success": True,
+        "data": group_stats.to_dict("records"),
+        "visualizations": [chart_path],
+        "summary": summary,
+        "metadata": {
+            "top_group": top_group,
+            "top_metric": top_metric,
+            "filter_value": filter_value
+        }
+    }
+    logger.info("analyze_metric_distribution_by_group completed successfully.")
+    return result
+
+
+def analyze_top_category_and_group_metric(
+    df: pd.DataFrame,
+    category_column: str,
+    group_column: str,
+    metric_column: str,
+    top_n: int = 10
+) -> Dict[str, Any]:
+    """
+    Generalized logic to find top category by metric and its group distribution.
+    """
+    cleanup_old_charts()
+    logger.info("Starting analyze_top_category_and_group_metric")
+    # Data sampling for large datasets
+    if len(df) > MAX_ROWS_THRESHOLD:
+        logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
+        df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
+    for col in [category_column, group_column, metric_column]:
+        if col not in df.columns:
+            logger.error(f"Column '{col}' not found in dataset.")
+            return {
+                "success": False,
+                "data": [],
+                "visualizations": [],
+                "summary": f"Column '{col}' not found in dataset.",
+                "metadata": {}
+            }
+    # Get top categories by metric
+    category_stats = df.groupby(category_column)[metric_column].sum().reset_index()
+    category_stats = category_stats.sort_values(by=metric_column, ascending=False)
+    top_category = category_stats.iloc[0][category_column] if not category_stats.empty else None
+    top_metric = category_stats.iloc[0][metric_column] if not category_stats.empty else None
+    # Visualization: top categories
+    plt.figure(figsize=(12, 8))
+    top_categories = category_stats.head(top_n)
+    ax = sns.barplot(x=category_column, y=metric_column, data=top_categories)
+    for i, v in enumerate(top_categories[metric_column]):
+        ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
+    plt.title(f'Top {top_n} {category_column} by {metric_column}', fontsize=16)
+    plt.xlabel(category_column, fontsize=14)
+    plt.ylabel(f'Total {metric_column}', fontsize=14)
     plt.xticks(rotation=45, ha='right')
     plt.tight_layout()
-    hashtags_chart_path = f'{CHARTS_DIR}/top_hashtags_by_likes.png'
-    plt.savefig(hashtags_chart_path)
+    category_chart_path = f'{CHARTS_DIR}/top_{category_column}_by_{metric_column}.png'
+    plt.savefig(category_chart_path)
     plt.close()
-    # Platform stats for top hashtag
-    top_hashtag_df = exploded_df[exploded_df['hashtags'] == top_hashtag]
-    platform_stats = top_hashtag_df.groupby('platform')['likes'].sum().reset_index()
-    platform_stats = platform_stats.sort_values(by='likes', ascending=False)
-    top_platform = platform_stats.iloc[0]['platform']
-    platform_likes = platform_stats.iloc[0]['likes']
-    # Visualization: platforms for top hashtag
+    # Group stats for top category
+    top_category_df = df[df[category_column] == top_category] if top_category is not None else df.iloc[[]]
+    group_stats = top_category_df.groupby(group_column)[metric_column].sum().reset_index()
+    group_stats = group_stats.sort_values(by=metric_column, ascending=False)
+    top_group = group_stats.iloc[0][group_column] if not group_stats.empty else None
+    group_metric = group_stats.iloc[0][metric_column] if not group_stats.empty else None
+    # Visualization: group for top category
     plt.figure(figsize=(10, 6))
-    ax = sns.barplot(x='platform', y='likes', data=platform_stats)
-    for i, v in enumerate(tqdm(platform_stats['likes'], desc="Annotating platform bars")):
+    ax = sns.barplot(x=group_column, y=metric_column, data=group_stats)
+    for i, v in enumerate(group_stats[metric_column]):
         ax.text(i, v + (v * 0.01), format_large_number(v), ha='center')
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: format_large_number(x)))
-    plt.title(f'Likes for #{top_hashtag} by Platform', fontsize=16)
-    plt.xlabel('Platform', fontsize=14)
-    plt.ylabel('Total Likes', fontsize=14)
+    plt.title(f'{metric_column} for Top {category_column}: {top_category} by {group_column}', fontsize=16)
+    plt.xlabel(group_column, fontsize=14)
+    plt.ylabel(f'Total {metric_column}', fontsize=14)
     plt.tight_layout()
-    platform_chart_path = f'{CHARTS_DIR}/hashtag_{top_hashtag}_by_platform.png'
-    plt.savefig(platform_chart_path)
+    group_chart_path = f'{CHARTS_DIR}/top_{category_column}_{top_category}_by_{group_column}.png'
+    plt.savefig(group_chart_path)
     plt.close()
     summary = (
-        f"The hashtag with the most likes is #{top_hashtag} with {format_large_number(top_likes)} likes. "
-        f"This hashtag appears most on {top_platform} with {format_large_number(platform_likes)} likes on that platform."
+        f"The {category_column} with the most {metric_column} is {top_category} with {format_large_number(top_metric)} {metric_column}. "
+        f"This {category_column} appears most in {group_column}={top_group} with {format_large_number(group_metric)} {metric_column} in that group."
+        if top_category is not None and top_group is not None else
+        f"No data found for {category_column} and {group_column}."
     )
     result = {
         "success": True,
         "data": {
-            "hashtag_stats": hashtag_stats.to_dict("records"),
-            "platform_stats": platform_stats.to_dict("records"),
+            "category_stats": category_stats.to_dict("records"),
+            "group_stats": group_stats.to_dict("records"),
         },
-        "visualizations": [hashtags_chart_path, platform_chart_path],
+        "visualizations": [category_chart_path, group_chart_path],
         "summary": summary,
         "metadata": {
-            "top_hashtag": top_hashtag,
-            "top_likes": top_likes,
-            "top_platform": top_platform,
-            "platform_likes": platform_likes
+            "top_category": top_category,
+            "top_metric": top_metric,
+            "top_group": top_group,
+            "group_metric": group_metric
         }
     }
-    logger.info("find_hashtag_with_most_likes_and_platform completed successfully.")
+    logger.info("analyze_top_category_and_group_metric completed successfully.")
     return result
 
-def analyze_negative_posts_by_platform(df_json):
+
+def analyze_value_counts_by_group(
+    df: pd.DataFrame,
+    target_column: str,
+    group_column: str,
+    target_value: Any
+) -> Dict[str, Any]:
     """
-    Analyze the number of negative posts by platform and create a visualization.
-    
-    Parameters:
-    -----------
-    df_json : str or pandas.DataFrame
-        The dataframe containing the data, or a JSON string representation
-        
-    Returns:
-    --------
-    str
-        A string with the analysis results and path to the generated chart
+    Count occurrences of target_value in target_column grouped by group_column.
     """
     cleanup_old_charts()
-    logger.info("Starting analyze_negative_posts_by_platform")
-    # Convert JSON to DataFrame if needed
-    if isinstance(df_json, str):
-        df_dict = json.loads(df_json)
-        df = pd.DataFrame(df_dict)
-    else:
-        df = df_json
+    logger.info("Starting analyze_value_counts_by_group")
     # Data sampling for large datasets
     if len(df) > MAX_ROWS_THRESHOLD:
         logger.warning(f"Dataset too large ({len(df)} rows). Sampling {MAX_ROWS_THRESHOLD} rows.")
         df = df.sample(n=MAX_ROWS_THRESHOLD, random_state=42)
-    logger.debug(f"Data shape after possible sampling: {df.shape}")
-    logger.info(f"Memory usage before processing: {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB")
-    # Group by platform and count negative posts
-    platform_stats = df[df['sentiment'] == 'negative'].groupby('platform').size().reset_index(name='negative_posts')
-    platform_stats = platform_stats.sort_values(by='negative_posts', ascending=False)
+    if target_column not in df.columns or group_column not in df.columns:
+        logger.error(f"Column(s) '{target_column}' or '{group_column}' not found in dataset.")
+        return {
+            "success": False,
+            "data": [],
+            "visualizations": [],
+            "summary": f"Column(s) '{target_column}' or '{group_column}' not found in dataset.",
+            "metadata": {}
+        }
+    filtered_df = df[df[target_column] == target_value]
+    group_stats = filtered_df.groupby(group_column).size().reset_index(name='count')
+    group_stats = group_stats.sort_values(by='count', ascending=False)
     # Visualization
     plt.figure(figsize=(10, 6))
-    ax = sns.barplot(x='platform', y='negative_posts', data=platform_stats)
-    for i, v in enumerate(tqdm(platform_stats['negative_posts'], desc="Annotating bars")):
+    ax = sns.barplot(x=group_column, y='count', data=group_stats)
+    for i, v in enumerate(group_stats['count']):
         ax.text(i, v + 1, format_large_number(v), ha='center')
-    plt.title('Negative Posts by Platform', fontsize=16)
-    plt.xlabel('Platform', fontsize=14)
-    plt.ylabel('Number of Negative Posts', fontsize=14)
+    plt.title(f"Count of {target_value} in {target_column} by {group_column}", fontsize=16)
+    plt.xlabel(group_column, fontsize=14)
+    plt.ylabel('Count', fontsize=14)
     plt.tight_layout()
-    chart_path = f'{CHARTS_DIR}/negative_posts_by_platform.png'
+    chart_path = f'{CHARTS_DIR}/count_{target_value}_in_{target_column}_by_{group_column}.png'
     plt.savefig(chart_path)
     plt.close()
-    top_platform = platform_stats.iloc[0]['platform']
-    top_count = platform_stats.iloc[0]['negative_posts']
-    platform_counts = {row['platform']: row['negative_posts'] for _, row in platform_stats.iterrows()}
-    summary = f"{top_platform} has the highest number of negative posts with {format_large_number(top_count)} posts."
+    if not group_stats.empty:
+        top_group = group_stats.iloc[0][group_column]
+        top_count = group_stats.iloc[0]['count']
+        group_counts = {row[group_column]: row['count'] for _, row in group_stats.iterrows()}
+        summary = f"{top_group} has the highest count of {target_value} in {target_column} with {format_large_number(top_count)} occurrences."
+    else:
+        top_group, top_count, group_counts, summary = None, None, {}, f"No data found for value {target_value} in column {target_column}."
     result = {
         "success": True,
-        "data": platform_stats.to_dict("records"),
+        "data": group_stats.to_dict("records"),
         "visualizations": [chart_path],
         "summary": summary,
         "metadata": {
-            "platform_counts": platform_counts,
-            "top_platform": top_platform,
+            "group_counts": group_counts,
+            "top_group": top_group,
             "top_count": top_count
         }
     }
-    logger.info("analyze_negative_posts_by_platform completed successfully.")
+    logger.info("analyze_value_counts_by_group completed successfully.")
     return result
 
 def analyze_categorical_counts(

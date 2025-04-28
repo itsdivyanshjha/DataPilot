@@ -30,6 +30,7 @@ import logging
 import warnings
 import matplotlib.font_manager as fm
 import time
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -504,6 +505,40 @@ Additional metrics include:
             allow_dangerous_code=True,
             extra_tools=[
                 Tool(
+                    name="get_dataset_context",
+                    func=lambda x: rag_manager.get_relevant_context(x) if st.session_state.rag_initialized else [],
+                    description="""Get relevant context from the dataset for a given query. This tool:
+                    1. Uses semantic search to find relevant information
+                    2. Returns context about column meanings, data relationships, and patterns
+                    3. Helps understand the dataset structure and content
+                    4. Provides insights about data quality and characteristics
+                    
+                    Always use this tool first to understand the dataset context before performing analysis."""
+                ),
+                Tool(
+                    name="get_dataset_info",
+                    func=lambda x: rag_manager.get_dataset_info() if st.session_state.rag_initialized else {},
+                    description="""Get comprehensive information about the current dataset. This tool:
+                    1. Returns column names and data types
+                    2. Provides basic statistics for each column
+                    3. Shows data quality metrics
+                    4. Identifies relationships between columns
+                    5. Highlights important patterns and trends
+                    
+                    Use this tool to understand the dataset structure before analysis."""
+                ),
+                Tool(
+                    name="get_column_semantics",
+                    func=lambda x: rag_manager.get_column_semantics(x) if st.session_state.rag_initialized else {},
+                    description="""Get semantic understanding of specific columns. This tool:
+                    1. Explains the meaning and purpose of columns
+                    2. Identifies relationships between columns
+                    3. Provides context about data values
+                    4. Suggests relevant analysis approaches
+                    
+                    Use this tool to understand specific columns before analyzing them."""
+                ),
+                Tool(
                     name="analyze_distribution",
                     func=lambda params: {
                         'output': (
@@ -593,40 +628,6 @@ Additional metrics include:
                     Returns comprehensive analysis results with visualizations."""
                 ),
                 Tool(
-                    name="get_dataset_context",
-                    func=lambda x: rag_manager.get_relevant_context(x) if st.session_state.rag_initialized else [],
-                    description="""Get relevant context from the dataset for a given query. This tool:
-                    1. Uses semantic search to find relevant information
-                    2. Returns context about column meanings, data relationships, and patterns
-                    3. Helps understand the dataset structure and content
-                    4. Provides insights about data quality and characteristics
-                    
-                    Always use this tool first to understand the dataset context before performing analysis."""
-                ),
-                Tool(
-                    name="get_dataset_info",
-                    func=lambda x: rag_manager.get_dataset_info() if st.session_state.rag_initialized else {},
-                    description="""Get comprehensive information about the current dataset. This tool:
-                    1. Returns column names and data types
-                    2. Provides basic statistics for each column
-                    3. Shows data quality metrics
-                    4. Identifies relationships between columns
-                    5. Highlights important patterns and trends
-                    
-                    Use this tool to understand the dataset structure before analysis."""
-                ),
-                Tool(
-                    name="get_column_semantics",
-                    func=lambda x: rag_manager.get_column_semantics(x) if st.session_state.rag_initialized else {},
-                    description="""Get semantic understanding of specific columns. This tool:
-                    1. Explains the meaning and purpose of columns
-                    2. Identifies relationships between columns
-                    3. Provides context about data values
-                    4. Suggests relevant analysis approaches
-                    
-                    Use this tool to understand specific columns before analyzing them."""
-                ),
-                Tool(
                     name="create_visualization",
                     func=lambda df_json, x_column, y_column=None, filter_column=None, filter_value=None, chart_type='bar', title=None, x_label=None, y_label=None, top_n=None, sort_by='count', ascending=False, include_percentages=True: create_generalized_visualization(
                         df=df_json,
@@ -703,8 +704,56 @@ Additional metrics include:
                 message_placeholder.markdown("Analyzing your data... ⏳")
             
             try:
-                # Invoke the agent executor with the user's query
-                res = agent_executor.invoke({"input": user_input})
+                # First, get dataset context using RAG
+                rag_context = []
+                if st.session_state.rag_initialized:
+                    try:
+                        # Get general dataset context
+                        dataset_info = rag_manager.get_dataset_info()
+                        if dataset_info:
+                            rag_context.append({
+                                'content': f"Dataset Info: {json.dumps(dataset_info, indent=2)}",
+                                'metadata': {'type': 'dataset_info'}
+                            })
+                        
+                        # Get query-specific context
+                        query_context = rag_manager.get_relevant_context(user_input)
+                        if query_context:
+                            rag_context.extend(query_context)
+                        
+                        logger.info(f"Retrieved {len(rag_context)} context items from RAG")
+                    except Exception as rag_error:
+                        logger.warning(f"Error retrieving RAG context: {str(rag_error)}")
+                        st.warning("Note: Using basic analysis as RAG context retrieval had an issue.")
+                
+                # Prepare the context-enhanced input
+                context_text = ""
+                if rag_context:
+                    context_sections = []
+                    for ctx in rag_context:
+                        if ctx['metadata'].get('type') == 'dataset_info':
+                            context_sections.append("Dataset Overview:\n" + ctx['content'])
+                        elif ctx['metadata'].get('type') == 'column_analysis':
+                            context_sections.append("Column Analysis:\n" + ctx['content'])
+                        elif ctx['metadata'].get('type') == 'correlations':
+                            context_sections.append("Correlations:\n" + ctx['content'])
+                        else:
+                            context_sections.append(ctx['content'])
+                    context_text = "\n\n".join(context_sections)
+                
+                # Combine context with user query
+                enhanced_input = user_input
+                if context_text:
+                    enhanced_input = f"""Context about the dataset:
+{context_text}
+
+User Query: {user_input}
+
+Please use this context to inform your analysis and response to the user query.
+"""
+                
+                # Invoke the agent executor with the context-enhanced query
+                res = agent_executor.invoke({"input": enhanced_input})
                 
                 # Process the response and check for multiple images
                 response_text = res['output']

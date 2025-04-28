@@ -31,6 +31,7 @@ import warnings
 import matplotlib.font_manager as fm
 import time
 import json
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -316,7 +317,8 @@ Additional metrics include:
         st.markdown("### 🔍 Quick Actions")
         quick_action = st.selectbox(
             "Choose an analysis type:",
-            ["Select an action", "Correlation Matrix", "Distribution Plots", "Summary Statistics", "Data Quality Report"]
+            ["Select an action", "Correlation Matrix", "Distribution Plots", "Box Plots", 
+             "Scatter Plots", "Time Series Plots", "Bar Charts", "Summary Statistics", "Data Quality Report"]
         )
         
         if quick_action == "Correlation Matrix":
@@ -407,6 +409,192 @@ Additional metrics include:
                 st.info("Displaying basic value counts instead:")
                 st.dataframe(df[col].value_counts().head(15))
         
+        elif quick_action == "Box Plots":
+            st.subheader("Box Plot Analysis")
+            numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
+            
+            if not numeric_cols.empty:
+                selected_cols = st.multiselect("Select columns for box plots:", numeric_cols)
+                if selected_cols:
+                    try:
+                        fig = plt.figure(figsize=(12, 6))
+                        plt.boxplot([df[col] for col in selected_cols], labels=selected_cols)
+                        plt.xticks(rotation=45)
+                        plt.title('Box Plots')
+                        plt.tight_layout()
+                        st.pyplot(fig)
+                        plt.close()
+
+                        # Display summary statistics for selected columns
+                        st.markdown("#### Summary Statistics")
+                        summary_df = df[selected_cols].describe()
+                        st.dataframe(summary_df)
+                    except Exception as e:
+                        st.error(f"Error generating box plots: {str(e)}")
+            else:
+                st.info("No numeric columns found in the dataset.")
+
+        elif quick_action == "Scatter Plots":
+            st.subheader("Scatter Plot Analysis")
+            numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
+            
+            if len(numeric_cols) >= 2:
+                col1 = st.selectbox("Select X-axis column:", numeric_cols)
+                col2 = st.selectbox("Select Y-axis column:", [col for col in numeric_cols if col != col1])
+                
+                try:
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    sns.scatterplot(data=df, x=col1, y=col2)
+                    plt.title(f'Scatter Plot: {col1} vs {col2}')
+                    
+                    # Add trend line
+                    sns.regplot(data=df, x=col1, y=col2, scatter=False, color='red')
+                    
+                    # Calculate correlation coefficient
+                    corr = df[col1].corr(df[col2])
+                    plt.text(0.05, 0.95, f'Correlation: {corr:.2f}', 
+                            transform=ax.transAxes, 
+                            bbox=dict(facecolor='white', alpha=0.8))
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    plt.close()
+                except Exception as e:
+                    st.error(f"Error generating scatter plot: {str(e)}")
+            else:
+                st.info("Need at least two numeric columns for scatter plots.")
+
+        elif quick_action == "Time Series Plots":
+            st.subheader("Time Series Analysis")
+            
+            # Identify datetime columns
+            datetime_cols = df.select_dtypes(include=['datetime64']).columns
+            if datetime_cols.empty:
+                # Try to identify columns that might contain dates
+                potential_date_cols = []
+                for col in df.columns:
+                    try:
+                        pd.to_datetime(df[col])
+                        potential_date_cols.append(col)
+                    except:
+                        continue
+                
+                if potential_date_cols:
+                    st.info("No datetime columns found. The following columns might contain dates:")
+                    date_col = st.selectbox("Select date column:", potential_date_cols)
+                    try:
+                        df[date_col] = pd.to_datetime(df[date_col])
+                        datetime_cols = [date_col]
+                    except Exception as e:
+                        st.error(f"Error converting to datetime: {str(e)}")
+                        datetime_cols = []
+                else:
+                    st.info("No datetime columns found in the dataset.")
+                    
+            if len(datetime_cols) > 0:
+                date_col = st.selectbox("Select date column:", datetime_cols)
+                numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
+                value_col = st.selectbox("Select value column:", numeric_cols)
+                
+                try:
+                    # Sort by date
+                    plot_df = df.sort_values(by=date_col)
+                    
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    plt.plot(plot_df[date_col], plot_df[value_col])
+                    plt.title(f'Time Series Plot: {value_col} over time')
+                    plt.xticks(rotation=45)
+                    
+                    # Add trend line
+                    z = np.polyfit(range(len(plot_df)), plot_df[value_col], 1)
+                    p = np.poly1d(z)
+                    plt.plot(plot_df[date_col], p(range(len(plot_df))), "r--", alpha=0.8, label='Trend')
+                    
+                    plt.legend()
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    plt.close()
+                    
+                    # Display basic time series statistics
+                    st.markdown("#### Time Series Statistics")
+                    stats_df = pd.DataFrame({
+                        'Metric': ['Start Date', 'End Date', 'Duration', 'Mean', 'Std Dev', 'Min', 'Max'],
+                        'Value': [
+                            plot_df[date_col].min(),
+                            plot_df[date_col].max(),
+                            f"{(plot_df[date_col].max() - plot_df[date_col].min()).days} days",
+                            f"{plot_df[value_col].mean():.2f}",
+                            f"{plot_df[value_col].std():.2f}",
+                            f"{plot_df[value_col].min():.2f}",
+                            f"{plot_df[value_col].max():.2f}"
+                        ]
+                    })
+                    st.table(stats_df)
+                except Exception as e:
+                    st.error(f"Error generating time series plot: {str(e)}")
+
+        elif quick_action == "Bar Charts":
+            st.subheader("Enhanced Bar Chart Analysis")
+            
+            # Allow selection of categorical columns
+            categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+            if not categorical_cols.empty:
+                col = st.selectbox("Select categorical column:", categorical_cols)
+                
+                try:
+                    # Get value counts and calculate percentages
+                    value_counts = df[col].value_counts()
+                    total_count = len(df)
+                    percentages = (value_counts / total_count * 100).round(1)
+                    
+                    # Allow user to choose number of categories to display
+                    max_categories = len(value_counts)
+                    num_categories = st.slider("Number of categories to display:", 
+                                            min_value=5, 
+                                            max_value=min(max_categories, 30), 
+                                            value=min(15, max_categories))
+                    
+                    # Create the visualization
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    
+                    # Plot top N categories
+                    value_counts = value_counts.head(num_categories)
+                    percentages = percentages.head(num_categories)
+                    
+                    # Create bar plot with percentage labels
+                    bars = ax.bar(range(len(value_counts)), value_counts.values)
+                    
+                    # Customize the plot
+                    plt.title(f'Distribution of {col} (Top {num_categories} Categories)')
+                    plt.xticks(range(len(value_counts)), 
+                              [str(x)[:20] + '...' if len(str(x)) > 20 else str(x) for x in value_counts.index],
+                              rotation=45, ha='right')
+                    
+                    # Add value and percentage labels on top of bars
+                    for i, (bar, percentage) in enumerate(zip(bars, percentages)):
+                        height = bar.get_height()
+                        ax.text(bar.get_x() + bar.get_width()/2., height,
+                               f'{height:,.0f}\n({percentage}%)',
+                               ha='center', va='bottom')
+                    
+                    plt.tight_layout()
+                    st.pyplot(fig)
+                    plt.close()
+                    
+                    # Display summary table
+                    summary_df = pd.DataFrame({
+                        'Category': value_counts.index,
+                        'Count': value_counts.values,
+                        'Percentage': percentages
+                    })
+                    st.markdown("#### Category Summary")
+                    st.dataframe(summary_df)
+                    
+                except Exception as e:
+                    st.error(f"Error generating bar chart: {str(e)}")
+            else:
+                st.info("No categorical columns found in the dataset.")
+
         elif quick_action == "Summary Statistics":
             st.subheader("Summary Statistics", divider="rainbow")
             try:
